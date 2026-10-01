@@ -1,5 +1,14 @@
-import { initializeApp } from "firebase/app";
-import { getAuth, signInAnonymously } from "firebase/auth";
+import { getApps, initializeApp } from "firebase/app";
+import {
+  EmailAuthProvider,
+  createUserWithEmailAndPassword,
+  getAuth,
+  linkWithCredential,
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signOut,
+  type User,
+} from "firebase/auth";
 import { doc, getDoc, getFirestore, onSnapshot, setDoc, updateDoc, type Unsubscribe } from "firebase/firestore";
 import { createDemoData } from "../demo-data";
 import type { HouseholdData, SyncState } from "../types";
@@ -17,6 +26,32 @@ const firebaseConfig = {
 
 export const householdId = import.meta.env.VITE_FIREBASE_HOUSEHOLD_ID || "living-current-home";
 export const firebaseConfigured = Boolean(firebaseConfig.apiKey && firebaseConfig.projectId && firebaseConfig.appId);
+
+const firebaseApp = () => getApps()[0] ?? initializeApp(firebaseConfig);
+
+export function observeHouseholdAuth(onChange: (user: User | null) => void) {
+  if (!firebaseConfigured) {
+    onChange(null);
+    return () => undefined;
+  }
+  return onAuthStateChanged(getAuth(firebaseApp()), onChange);
+}
+
+export async function signInToHousehold(email: string, password: string) {
+  return signInWithEmailAndPassword(getAuth(firebaseApp()), email.trim(), password);
+}
+
+export async function createHouseholdAccount(email: string, password: string) {
+  const auth = getAuth(firebaseApp());
+  if (auth.currentUser?.isAnonymous) {
+    return linkWithCredential(auth.currentUser, EmailAuthProvider.credential(email.trim(), password));
+  }
+  return createUserWithEmailAndPassword(auth, email.trim(), password);
+}
+
+export async function signOutOfHousehold() {
+  return signOut(getAuth(firebaseApp()));
+}
 
 const readLocal = (): HouseholdData => {
   try {
@@ -58,10 +93,10 @@ export async function createDataStore({ onData, onSync, onIdentity }: StoreOptio
 
   onSync("connecting");
   try {
-    const app = initializeApp(firebaseConfig);
-    const auth = getAuth(app);
-    const credential = await signInAnonymously(auth);
-    uid = credential.user.uid;
+    const app = firebaseApp();
+    const user = getAuth(app).currentUser;
+    if (!user || user.isAnonymous) throw new Error("Household sign-in required");
+    uid = user.uid;
     onIdentity(uid);
     const reference = doc(getFirestore(app), "households", householdId);
     const firstSnapshot = await getDoc(reference);

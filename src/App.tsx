@@ -14,6 +14,9 @@ import {
   FileSpreadsheet,
   Home,
   Landmark,
+  LockKeyhole,
+  LogOut,
+  Mail,
   Menu,
   Plus,
   ReceiptText,
@@ -26,7 +29,17 @@ import {
   X,
 } from "lucide-react";
 import { createDemoData } from "./demo-data";
-import { createDataStore, firebaseConfigured, householdId, type DataStore } from "./lib/data-store";
+import {
+  createDataStore,
+  createHouseholdAccount,
+  firebaseConfigured,
+  householdId,
+  observeHouseholdAuth,
+  signInToHousehold,
+  signOutOfHousehold,
+  type DataStore,
+} from "./lib/data-store";
+import type { User } from "firebase/auth";
 import { getDailyQuoteSet } from "./quotes";
 import type { Bill, HouseholdData, SyncState, Transaction } from "./types";
 
@@ -35,7 +48,7 @@ type View = "overview" | "activity" | "bills" | "import" | "settings";
 const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const shortDate = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" });
 const longDate = new Intl.DateTimeFormat("en-US", { weekday: "long", month: "long", day: "numeric" });
-const categories = ["Groceries", "Dining", "Housing", "Utilities", "Cell Phone & Internet", "Transportation", "Insurance", "Health", "Household", "Salary", "Additional Income", "Other"];
+const categories = ["Groceries", "Dining", "Housing", "Utilities", "Cell Phone & Internet", "Transportation", "Insurance", "Health", "Household", "Salary", "Additional Income", "Other", "Custom"];
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const makeId = () => crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -45,6 +58,8 @@ function App() {
   const [data, setData] = useState<HouseholdData>(createDemoData);
   const [view, setView] = useState<View>("overview");
   const [loading, setLoading] = useState(true);
+  const [authReady, setAuthReady] = useState(!firebaseConfigured);
+  const [authUser, setAuthUser] = useState<User | null>(null);
   const [storeReady, setStoreReady] = useState(false);
   const [sync, setSync] = useState<SyncState>("connecting");
   const [deviceUid, setDeviceUid] = useState("");
@@ -54,8 +69,16 @@ function App() {
   const [toast, setToast] = useState("");
   const store = useRef<DataStore | null>(null);
 
+  useEffect(() => observeHouseholdAuth((user) => {
+    setAuthUser(user);
+    setAuthReady(true);
+  }), []);
+
   useEffect(() => {
+    if (!authReady || (firebaseConfigured && (!authUser || authUser.isAnonymous))) return;
     let active = true;
+    setStoreReady(false);
+    setSync("connecting");
     createDataStore({
       onData: (next) => active && setData(next),
       onSync: (state) => active && setSync(state),
@@ -70,7 +93,7 @@ function App() {
       active = false;
       store.current?.destroy();
     };
-  }, []);
+  }, [authReady, authUser?.uid]);
 
   useEffect(() => {
     if (!toast) return;
@@ -112,7 +135,11 @@ function App() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  if (loading) return <LoadingScreen ready={storeReady} onContinue={() => setLoading(false)} />;
+  if (loading) return <LoadingScreen ready={authReady} onContinue={() => setLoading(false)} />;
+
+  if (firebaseConfigured && (!authUser || authUser.isAnonymous)) return <AuthScreen hasAnonymousHousehold={Boolean(authUser?.isAnonymous)} />;
+
+  if (!storeReady) return <HouseholdConnecting />;
 
   return (
     <div className="app-shell">
@@ -155,7 +182,7 @@ function App() {
         {view === "activity" && <Activity data={data} onDelete={(id) => updateData((current) => ({ ...current, transactions: current.transactions.filter((item) => item.id !== id) }), "Transaction removed")} />}
         {view === "bills" && <Bills data={data} onAdd={() => setBillOpen(true)} onToggle={(id) => updateData((current) => ({ ...current, bills: current.bills.map((bill) => bill.id === id ? { ...bill, paid: !bill.paid } : bill) }), "Bill updated")} />}
         {view === "import" && <ImportExport data={data} onImport={(transactions) => updateData((current) => ({ ...current, transactions: [...transactions, ...current.transactions] }), `${transactions.length} transactions imported`)} />}
-        {view === "settings" && <SettingsView data={data} sync={sync} uid={deviceUid} onSave={(values) => updateData((current) => ({ ...current, ...values }), "Settings saved")} />}
+        {view === "settings" && <SettingsView data={data} sync={sync} email={authUser?.email || ""} uid={deviceUid} onSignOut={() => void signOutOfHousehold()} onSave={(values) => updateData((current) => ({ ...current, ...values }), "Settings saved")} />}
       </main>
 
       <nav className="bottom-nav" aria-label="Mobile navigation">
@@ -171,6 +198,49 @@ function App() {
       {toast && <div className="toast" role="status"><Check /> {toast}</div>}
     </div>
   );
+}
+
+function AuthScreen({ hasAnonymousHousehold }: { hasAnonymousHousehold: boolean }) {
+  const [mode, setMode] = useState<"signin" | "create">(hasAnonymousHousehold ? "create" : "signin");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      if (mode === "create") await createHouseholdAccount(email, password);
+      else await signInToHousehold(email, password);
+    } catch (reason) {
+      const code = typeof reason === "object" && reason && "code" in reason ? String(reason.code) : "";
+      setError(code.includes("email-already-in-use") ? "That household account already exists. Choose Sign in instead." : code.includes("invalid-credential") ? "The email or password is incorrect." : code.includes("weak-password") ? "Use a password with at least six characters." : "We couldn’t complete that sign-in. Please check the details and try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <main className="auth-screen">
+      <div className="auth-contours" aria-hidden="true"><i /><i /><i /></div>
+      <section className="auth-card">
+        <div className="auth-brand"><BrandMark /><div><strong>LIVING CURRENT</strong><span>Your private household current</span></div></div>
+        <div className="auth-copy"><span>HOUSEHOLD ACCESS</span><h1>{mode === "create" ? "Create your shared sign-in." : "Welcome back."}</h1><p>{mode === "create" && hasAnonymousHousehold ? "Use the shared email you and your wife prefer. This converts the current device without losing its household." : "Use the same household email and password on both devices."}</p></div>
+        <div className="auth-tabs" role="tablist"><button className={mode === "signin" ? "active" : ""} type="button" onClick={() => { setMode("signin"); setError(""); }}>Sign in</button><button className={mode === "create" ? "active" : ""} type="button" onClick={() => { setMode("create"); setError(""); }}>Create account</button></div>
+        <form className="auth-form" onSubmit={submit}>
+          <label><span>Email</span><div><Mail /><input type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="household@example.com" required /></div></label>
+          <label><span>Password</span><div><LockKeyhole /><input type="password" autoComplete={mode === "create" ? "new-password" : "current-password"} minLength={6} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 6 characters" required /></div></label>
+          {error && <div className="form-error" role="alert">{error}</div>}
+          <button className="auth-submit" type="submit" disabled={busy}>{busy ? "Please wait…" : mode === "create" ? "Create household account" : "Sign in to Living Current"}<ChevronRight /></button>
+        </form>
+        <div className="auth-assurance"><ShieldCheck /><span><strong>No bank connection</strong>Only the financial entries you choose to save are stored.</span></div>
+      </section>
+    </main>
+  );
+}
+
+function HouseholdConnecting() {
+  return <main className="connection-screen"><BrandMark /><span>Opening your household…</span></main>;
 }
 
 function LoadingScreen({ ready, onContinue }: { ready: boolean; onContinue: () => void }) {
@@ -319,7 +389,7 @@ function ImportExport({ data, onImport }: { data: HouseholdData; onImport: (tran
   );
 }
 
-function SettingsView({ data, sync, uid, onSave }: { data: HouseholdData; sync: SyncState; uid: string; onSave: (values: Partial<HouseholdData>) => void }) {
+function SettingsView({ data, sync, email, uid, onSave, onSignOut }: { data: HouseholdData; sync: SyncState; email: string; uid: string; onSave: (values: Partial<HouseholdData>) => void; onSignOut: () => void }) {
   const [startingBalance, setStartingBalance] = useState(String(data.startingBalance));
   const [safetyBuffer, setSafetyBuffer] = useState(String(data.safetyBuffer));
   const [displayName, setDisplayName] = useState(data.displayName);
@@ -329,7 +399,7 @@ function SettingsView({ data, sync, uid, onSave }: { data: HouseholdData; sync: 
       <section className="section-intro"><div><span>HOUSEHOLD SETTINGS</span><h2>Shape the view you share.</h2><p>These values affect both enrolled devices.</p></div></section>
       <div className="settings-grid">
         <form className="panel settings-form" onSubmit={(event) => { event.preventDefault(); onSave({ startingBalance: Number(startingBalance), safetyBuffer: Number(safetyBuffer), displayName, partnerName }); }}><h3>Household details</h3><label>Your display name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label><label>Partner display name<input value={partnerName} onChange={(event) => setPartnerName(event.target.value)} /></label><label>Starting balance<input inputMode="decimal" value={startingBalance} onChange={(event) => setStartingBalance(event.target.value)} /></label><label>Safety buffer<input inputMode="decimal" value={safetyBuffer} onChange={(event) => setSafetyBuffer(event.target.value)} /></label><button className="primary-button" type="submit">Save changes</button></form>
-        <section className="panel connection-panel"><div className="connection-icon"><CloudCheck /></div><span>SYNC STATUS</span><h3>{syncLabel(sync)}</h3><p>{firebaseConfigured ? "This device is using anonymous Firebase authentication. Add its device ID to the household member list to enable secure sharing." : "Add the Firebase values from .env.example to enable real-time household cloud save."}</p><dl><div><dt>Household</dt><dd>{householdId}</dd></div><div><dt>Device ID</dt><dd>{uid || "Available after Firebase setup"}</dd></div><div><dt>Storage</dt><dd>{firebaseConfigured ? "Cloud Firestore" : "Local preview"}</dd></div></dl></section>
+        <section className="panel connection-panel"><div className="connection-icon"><CloudCheck /></div><span>SYNC STATUS</span><h3>{syncLabel(sync)}</h3><p>{firebaseConfigured ? "Both devices can use the same household email and password. Firebase keeps the shared record synchronized." : "Add the Firebase values from .env.example to enable real-time household cloud save."}</p><dl><div><dt>Household</dt><dd>{householdId}</dd></div><div><dt>Signed in as</dt><dd>{email || uid || "Local preview"}</dd></div><div><dt>Storage</dt><dd>{firebaseConfigured ? "Cloud Firestore" : "Local preview"}</dd></div></dl>{firebaseConfigured && <button className="signout-button" type="button" onClick={onSignOut}><LogOut /> Sign out on this device</button>}</section>
       </div>
     </div>
   );
@@ -339,16 +409,17 @@ function TransactionDialog({ name, onClose, onSave }: { name: string; onClose: (
   const [kind, setKind] = useState<"expense" | "income">("expense");
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState("Groceries");
+  const [customCategory, setCustomCategory] = useState("");
   const [amount, setAmount] = useState("");
   const [date, setDate] = useState(todayISO());
-  const submit = (event: FormEvent) => { event.preventDefault(); const value = Math.abs(Number(amount)); if (!description.trim() || !value) return; onSave({ id: makeId(), date, description: description.trim(), category, amount: kind === "expense" ? -value : value, enteredBy: name || "Household", createdAt: new Date().toISOString() }); };
-  return <Modal title="Record a movement" onClose={onClose}><form className="entry-form" onSubmit={submit}><div className="type-toggle"><button type="button" className={kind === "expense" ? "active" : ""} onClick={() => setKind("expense")}><ArrowUpRight /> Expense</button><button type="button" className={kind === "income" ? "active" : ""} onClick={() => setKind("income")}><ArrowDownLeft /> Income</button></div><label>Description<input autoFocus value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Publix" required /></label><div className="form-row"><label>Category<select value={category} onChange={(event) => setCategory(event.target.value)}>{categories.map((item) => <option key={item}>{item}</option>)}</select></label><label>Amount<input inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="0.00" required /></label></div><label>Date<input type="date" value={date} onChange={(event) => setDate(event.target.value)} required /></label><button className="primary-button submit-button" type="submit">Add to household</button></form></Modal>;
+  const submit = (event: FormEvent) => { event.preventDefault(); const value = Math.abs(Number(amount)); const finalCategory = category === "Custom" ? customCategory.trim() : category; if (!description.trim() || !value || !finalCategory) return; onSave({ id: makeId(), date, description: description.trim(), category: finalCategory, amount: kind === "expense" ? -value : value, enteredBy: name || "Household", createdAt: new Date().toISOString() }); };
+  return <Modal title="Record a movement" onClose={onClose}><form className="entry-form" onSubmit={submit}><div className="type-toggle"><button type="button" className={kind === "expense" ? "active" : ""} onClick={() => setKind("expense")}><ArrowUpRight /> Expense</button><button type="button" className={kind === "income" ? "active" : ""} onClick={() => setKind("income")}><ArrowDownLeft /> Income</button></div><label>Description<input autoFocus value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Publix" required /></label><div className="form-row"><label>Category<select value={category} onChange={(event) => setCategory(event.target.value)}>{categories.map((item) => <option key={item}>{item}</option>)}</select></label><label>Amount<input inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="0.00" required /></label></div>{category === "Custom" && <label>Custom category name<input value={customCategory} onChange={(event) => setCustomCategory(event.target.value)} placeholder="Pet care" required /></label>}<label>Date<input type="date" value={date} onChange={(event) => setDate(event.target.value)} required /></label><button className="primary-button submit-button" type="submit">Add to household</button></form></Modal>;
 }
 
 function BillDialog({ onClose, onSave }: { onClose: () => void; onSave: (bill: Bill) => void }) {
-  const [name, setName] = useState(""); const [category, setCategory] = useState("Utilities"); const [amount, setAmount] = useState(""); const [date, setDate] = useState(todayISO()); const [recurrence, setRecurrence] = useState<Bill["recurrence"]>("monthly");
-  const submit = (event: FormEvent) => { event.preventDefault(); if (!name.trim() || !Number(amount)) return; onSave({ id: makeId(), name: name.trim(), category, amount: Math.abs(Number(amount)), dueDate: date, recurrence, paid: false }); };
-  return <Modal title="Add an upcoming bill" onClose={onClose}><form className="entry-form" onSubmit={submit}><label>Bill name<input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="Electric" required /></label><div className="form-row"><label>Category<select value={category} onChange={(event) => setCategory(event.target.value)}>{categories.filter((item) => !item.toLowerCase().includes("income") && item !== "Salary").map((item) => <option key={item}>{item}</option>)}</select></label><label>Amount<input inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="0.00" required /></label></div><div className="form-row"><label>Due date<input type="date" value={date} onChange={(event) => setDate(event.target.value)} required /></label><label>Repeats<select value={recurrence} onChange={(event) => setRecurrence(event.target.value as Bill["recurrence"])}><option value="monthly">Monthly</option><option value="weekly">Weekly</option><option value="yearly">Yearly</option><option value="once">One time</option></select></label></div><button className="primary-button submit-button" type="submit">Reserve this bill</button></form></Modal>;
+  const [name, setName] = useState(""); const [category, setCategory] = useState("Utilities"); const [customCategory, setCustomCategory] = useState(""); const [amount, setAmount] = useState(""); const [date, setDate] = useState(todayISO()); const [recurrence, setRecurrence] = useState<Bill["recurrence"]>("monthly");
+  const submit = (event: FormEvent) => { event.preventDefault(); const finalCategory = category === "Custom" ? customCategory.trim() : category; if (!name.trim() || !Number(amount) || !finalCategory) return; onSave({ id: makeId(), name: name.trim(), category: finalCategory, amount: Math.abs(Number(amount)), dueDate: date, recurrence, paid: false }); };
+  return <Modal title="Add an upcoming bill" onClose={onClose}><form className="entry-form" onSubmit={submit}><label>Bill name<input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="Electric" required /></label><div className="form-row"><label>Category<select value={category} onChange={(event) => setCategory(event.target.value)}>{categories.filter((item) => !item.toLowerCase().includes("income") && item !== "Salary").map((item) => <option key={item}>{item}</option>)}</select></label><label>Amount<input inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="0.00" required /></label></div>{category === "Custom" && <label>Custom category name<input value={customCategory} onChange={(event) => setCustomCategory(event.target.value)} placeholder="Pet care" required /></label>}<div className="form-row"><label>Due date<input type="date" value={date} onChange={(event) => setDate(event.target.value)} required /></label><label>Repeats<select value={recurrence} onChange={(event) => setRecurrence(event.target.value as Bill["recurrence"])}><option value="monthly">Monthly</option><option value="weekly">Weekly</option><option value="yearly">Yearly</option><option value="once">One time</option></select></label></div><button className="primary-button submit-button" type="submit">Reserve this bill</button></form></Modal>;
 }
 
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) { return <div className="modal-layer" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><header><div><span>HOUSEHOLD ENTRY</span><h2 id="modal-title">{title}</h2></div><button aria-label="Close" onClick={onClose}><X /></button></header>{children}</section></div>; }
