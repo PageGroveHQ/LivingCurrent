@@ -1,0 +1,12 @@
+{
+  "name": "Living Current",
+  "short_name": "Current",
+  "description": "A private, shared view of your household finances.",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#0a2725",
+  "theme_color": "#0a2725",
+  "icons": [
+    { "src": "./favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
