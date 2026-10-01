@@ -10,7 +10,11 @@ service cloud.firestore {
         return signedIn() && request.auth.uid in resource.data.memberUids;
       }
 
-      allow read, update: if isMember();
+      allow get: if signedIn()
+        && (!exists(/databases/$(database)/documents/households/$(householdId))
+          || isMember());
+      allow list: if false;
+      allow update: if isMember();
       allow create: if signedIn()
         && request.resource.data.memberUids.size() == 1
         && request.resource.data.memberUids[0] == request.auth.uid;
