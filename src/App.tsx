@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { createDemoData } from "./demo-data";
 import { createDataStore, firebaseConfigured, householdId, type DataStore } from "./lib/data-store";
+import { getDailyQuoteSet } from "./quotes";
 import type { Bill, HouseholdData, SyncState, Transaction } from "./types";
 
 type View = "overview" | "activity" | "bills" | "import" | "settings";
@@ -44,6 +45,7 @@ function App() {
   const [data, setData] = useState<HouseholdData>(createDemoData);
   const [view, setView] = useState<View>("overview");
   const [loading, setLoading] = useState(true);
+  const [storeReady, setStoreReady] = useState(false);
   const [sync, setSync] = useState<SyncState>("connecting");
   const [deviceUid, setDeviceUid] = useState("");
   const [transactionOpen, setTransactionOpen] = useState(false);
@@ -54,7 +56,6 @@ function App() {
 
   useEffect(() => {
     let active = true;
-    const start = Date.now();
     createDataStore({
       onData: (next) => active && setData(next),
       onSync: (state) => active && setSync(state),
@@ -63,8 +64,7 @@ function App() {
       if (!active) return;
       store.current = result;
       setData(result.initialData);
-      const remaining = Math.max(0, 1050 - (Date.now() - start));
-      window.setTimeout(() => active && setLoading(false), remaining);
+      setStoreReady(true);
     });
     return () => {
       active = false;
@@ -112,7 +112,7 @@ function App() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  if (loading) return <LoadingScreen />;
+  if (loading) return <LoadingScreen ready={storeReady} onContinue={() => setLoading(false)} />;
 
   return (
     <div className="app-shell">
@@ -173,18 +173,23 @@ function App() {
   );
 }
 
-function LoadingScreen() {
+function LoadingScreen({ ready, onContinue }: { ready: boolean; onContinue: () => void }) {
+  const quotes = getDailyQuoteSet();
   return (
     <main className="loading-screen">
       <div className="loading-contours" aria-hidden="true"><i /><i /><i /><i /><i /><span /></div>
       <div className="loading-brand"><BrandMark /><strong>LIVING CURRENT</strong><span>A shared view of what’s ahead.</span></div>
       <div className="loading-orb" aria-hidden="true"><b>LC</b><span /></div>
       <div className="loading-quotes">
-        <article><small>01 · SCRIPTURE</small><blockquote>“Commit thy works unto the Lord, and thy thoughts shall be established.”</blockquote><cite>Proverbs 16:3 · KJV</cite></article>
-        <article><small>02 · MOTIVATION</small><blockquote>“Great things are done by a series of small things brought together.”</blockquote><cite>Vincent van Gogh</cite></article>
-        <article><small>03 · FINANCIAL WISDOM</small><blockquote>“An investment in knowledge pays the best interest.”</blockquote><cite>Benjamin Franklin</cite></article>
+        <article><small>01 · SCRIPTURE</small><blockquote>“{quotes.scripture.text}”</blockquote><cite>{quotes.scripture.source}</cite></article>
+        <article><small>02 · MOTIVATION</small><blockquote>“{quotes.motivation.text}”</blockquote><cite>{quotes.motivation.source}</cite></article>
+        <article><small>03 · FINANCIAL WISDOM</small><blockquote>“{quotes.financial.text}”</blockquote><cite>{quotes.financial.source}</cite></article>
       </div>
-      <div className="loading-status"><span /><p>Bringing your household into view</p></div>
+      <div className="loading-footer">
+        <div className="loading-status"><span /><p>{ready ? "Your household is ready" : "Bringing your household into view"}</p></div>
+        <button className="loading-enter" type="button" disabled={!ready} onClick={onContinue}>{ready ? "Enter Living Current" : "Connecting…"}<ChevronRight /></button>
+        <small>Today’s reflection · changes each calendar day</small>
+      </div>
     </main>
   );
 }
