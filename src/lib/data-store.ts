@@ -14,6 +14,8 @@ import { createDemoData } from "../demo-data";
 import type { HouseholdData, SyncState } from "../types";
 
 const STORAGE_KEY = "living-current-household-v1";
+const PENDING_KEY = "living-current-pending-save";
+const cloudValues = (data: HouseholdData) => JSON.parse(JSON.stringify(data));
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -130,6 +132,12 @@ export async function createDataStore({ onData, onSync, onIdentity }: StoreOptio
     } else {
       const remoteRaw = firstSnapshot.data() as Partial<HouseholdData>;
       const remote = migrateHouseholdData(remoteRaw);
+      const pendingLocal = migrateHouseholdData(readLocal());
+      if (localStorage.getItem(PENDING_KEY) === "true" || pendingLocal.updatedAt > remote.updatedAt) {
+        await updateDoc(reference, cloudValues(pendingLocal));
+        localStorage.removeItem(PENDING_KEY);
+        Object.assign(remote, pendingLocal);
+      }
       if (remoteRaw.schemaVersion !== 3) await updateDoc(reference, { ...remote });
       writeLocal(remote);
       onData(remote);
@@ -147,9 +155,11 @@ export async function createDataStore({ onData, onSync, onIdentity }: StoreOptio
       initialData: firstSnapshot.exists() ? migrateHouseholdData(firstSnapshot.data() as Partial<HouseholdData>) : initialData,
       save: async (data) => {
         writeLocal(data);
+        localStorage.setItem(PENDING_KEY, "true");
         if (!cloudDocumentExists) return;
         try {
-          await updateDoc(reference, { ...data });
+          await updateDoc(reference, cloudValues(data));
+          localStorage.removeItem(PENDING_KEY);
           onSync("synced");
         } catch {
           onSync("needs-setup");
