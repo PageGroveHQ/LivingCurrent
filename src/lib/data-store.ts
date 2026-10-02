@@ -185,7 +185,7 @@ export async function createDataStore({ onData, onSync, onIdentity }: StoreOptio
       latestData = remote;
     }
 
-    unsubscribe = onSnapshot(reference, (snapshot) => {
+    unsubscribe = onSnapshot(reference, { includeMetadataChanges: true }, (snapshot) => {
       if (!snapshot.exists()) return;
       if (pendingCount || snapshot.metadata.hasPendingWrites || localStorage.getItem(outboxKey)) return;
       const remote = migrateHouseholdData(snapshot.data() as Partial<HouseholdData>);
@@ -217,6 +217,7 @@ export async function createDataStore({ onData, onSync, onIdentity }: StoreOptio
         await saveQueue;
         if (!pendingCount && !localStorage.getItem(outboxKey)) {
           try { const snapshot = await getDoc(reference);
+            if (pendingCount || localStorage.getItem(outboxKey)) return;
             latestData = migrateHouseholdData(snapshot.data() as Partial<HouseholdData>);
             writeLocal(latestData); onData(latestData); onSync("synced");
           } catch { onSync("offline"); }
