@@ -44,6 +44,7 @@ import { getDailyQuoteSet } from "./quotes";
 import type { Bill, HouseholdData, SyncState, Transaction } from "./types";
 
 type View = "overview" | "activity" | "bills" | "import" | "settings";
+type AuthIdentity = Pick<User, "uid" | "email" | "isAnonymous">;
 
 const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const shortDate = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" });
@@ -59,7 +60,7 @@ function App() {
   const [view, setView] = useState<View>("overview");
   const [loading, setLoading] = useState(true);
   const [authReady, setAuthReady] = useState(!firebaseConfigured);
-  const [authUser, setAuthUser] = useState<User | null>(null);
+  const [authUser, setAuthUser] = useState<AuthIdentity | null>(null);
   const [storeReady, setStoreReady] = useState(false);
   const [sync, setSync] = useState<SyncState>("connecting");
   const [deviceUid, setDeviceUid] = useState("");
@@ -70,7 +71,7 @@ function App() {
   const store = useRef<DataStore | null>(null);
 
   useEffect(() => observeHouseholdAuth((user) => {
-    setAuthUser(user);
+    setAuthUser(user ? { uid: user.uid, email: user.email, isAnonymous: user.isAnonymous } : null);
     setAuthReady(true);
   }), []);
 
@@ -93,7 +94,7 @@ function App() {
       active = false;
       store.current?.destroy();
     };
-  }, [authReady, authUser?.uid]);
+  }, [authReady, authUser?.uid, authUser?.isAnonymous]);
 
   useEffect(() => {
     if (!toast) return;
@@ -137,7 +138,7 @@ function App() {
 
   if (loading) return <LoadingScreen ready={authReady} onContinue={() => setLoading(false)} />;
 
-  if (firebaseConfigured && (!authUser || authUser.isAnonymous)) return <AuthScreen hasAnonymousHousehold={Boolean(authUser?.isAnonymous)} />;
+  if (firebaseConfigured && (!authUser || authUser.isAnonymous)) return <AuthScreen hasAnonymousHousehold={Boolean(authUser?.isAnonymous)} onAuthenticated={(user) => setAuthUser({ uid: user.uid, email: user.email, isAnonymous: user.isAnonymous })} />;
 
   if (!storeReady) return <HouseholdConnecting />;
 
@@ -200,7 +201,7 @@ function App() {
   );
 }
 
-function AuthScreen({ hasAnonymousHousehold }: { hasAnonymousHousehold: boolean }) {
+function AuthScreen({ hasAnonymousHousehold, onAuthenticated }: { hasAnonymousHousehold: boolean; onAuthenticated: (user: User) => void }) {
   const [mode, setMode] = useState<"signin" | "create">(hasAnonymousHousehold ? "create" : "signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -211,8 +212,8 @@ function AuthScreen({ hasAnonymousHousehold }: { hasAnonymousHousehold: boolean 
     setBusy(true);
     setError("");
     try {
-      if (mode === "create") await createHouseholdAccount(email, password);
-      else await signInToHousehold(email, password);
+      const credential = mode === "create" ? await createHouseholdAccount(email, password) : await signInToHousehold(email, password);
+      onAuthenticated(credential.user);
     } catch (reason) {
       const code = typeof reason === "object" && reason && "code" in reason ? String(reason.code) : "";
       setError(code.includes("email-already-in-use") ? "That household account already exists. Choose Sign in instead." : code.includes("invalid-credential") ? "The email or password is incorrect." : code.includes("weak-password") ? "Use a password with at least six characters." : "We couldn’t complete that sign-in. Please check the details and try again.");
