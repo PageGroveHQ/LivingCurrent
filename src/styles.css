@@ -35,6 +35,13 @@ svg { width: 20px; height: 20px; stroke-width: 1.8; }
 .brand-lockup strong { display: block; font-size: .78rem; font-weight: 600; letter-spacing: .14em; }
 .brand-lockup span { display: block; margin-top: 4px; color: #91aaa1; font-size: .7rem; white-space: nowrap; }
 .brand-mark { position: relative; flex: 0 0 auto; width: 40px; height: 40px; }
+.brand-mark img { display:block;width:100%;height:100%; }
+.paste-import { padding:20px;margin-bottom:20px; }.paste-import summary { cursor:pointer;font-weight:600; }.paste-import textarea { display:block;width:100%;margin:10px 0 16px;padding:12px;border:1px solid #c4d1c8;border-radius:10px;font-size:16px;background:#fafbf7;color:#173a29; }.paste-import p { color:#60766b;font-size:.85rem; }
+.loading-coin { position:relative;margin:clamp(32px,6vh,64px) 0 32px; }
+.loading-coin .brand-mark { width:180px;height:180px;filter:drop-shadow(0 18px 30px rgba(0,0,0,.3)); }
+.loading-coin::after { content:"";position:absolute;inset:14%;border-radius:50%;background:linear-gradient(115deg,transparent 35%,rgba(255,245,201,.3) 49%,transparent 63%);pointer-events:none;animation:coin-light 7s ease-in-out infinite; }
+@keyframes coin-light { 0%,100% { opacity:0;transform:translateX(-10px); } 45%,55% { opacity:.6;transform:translateX(10px); } }
+@media (prefers-reduced-motion:reduce) { .loading-coin::after { animation:none;opacity:0; } }
 .brand-mark svg { width: 100%; height: 100%; overflow: visible; }
 .brand-mark circle { fill: rgba(200,142,84,.06); stroke: #c99055; stroke-width: 1.7; }
 .brand-mark path { fill: none; stroke: rgba(231,201,157,.72); stroke-width: 1.35; stroke-linecap: round; }

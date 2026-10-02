@@ -311,9 +311,8 @@ function LoadingScreen({ ready, onContinue }: { ready: boolean; onContinue: () =
   const quotes = getDailyQuoteSet();
   return (
     <main className="loading-screen">
-      <div className="loading-contours" aria-hidden="true"><i /><i /><i /><i /><i /><span /></div>
       <div className="loading-brand"><BrandMark /><strong>LIVING CURRENT</strong><span>A shared view of what’s ahead.</span></div>
-      <div className="loading-orb" aria-hidden="true"><div className="loading-monogram"><b>L</b><i /><b>C</b></div><span /></div>
+      <div className="loading-coin" aria-hidden="true"><BrandMark /></div>
       <div className="loading-quotes">
         <article><small>01 · SCRIPTURE</small><blockquote>“{quotes.scripture.text}”</blockquote><cite>{quotes.scripture.source}</cite></article>
         <article><small>02 · MOTIVATION</small><blockquote>“{quotes.motivation.text}”</blockquote><cite>{quotes.motivation.source}</cite></article>
@@ -442,6 +441,7 @@ function Bills({ data, onAdd, onToggle }: { data: HouseholdData; onAdd: () => vo
 }
 
 function ImportExport({ data, enteredBy, onImport }: { data: HouseholdData; enteredBy: string; onImport: (transactions: Transaction[]) => void }) {
+  const [pastedImport, setPastedImport] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState("");
 
@@ -479,6 +479,7 @@ function ImportExport({ data, enteredBy, onImport }: { data: HouseholdData; ente
   return (
     <div className="page-content import-page">
       <section className="section-intro"><div><span>PORTABLE BY DESIGN</span><h2>Your records stay useful anywhere.</h2><p>Bring in clean transaction files or keep an independent household backup.</p></div></section>
+      <section className="panel paste-import"><details><summary>Paste CSV or JSON instead</summary><p>Paste your transaction file contents below. The same date, duplicate, and archive checks apply.</p><label htmlFor="paste-transactions">Transaction CSV or JSON</label><textarea id="paste-transactions" rows={8} value={pastedImport} onChange={(event) => setPastedImport(event.target.value)} /><button className="primary-button" disabled={!pastedImport.trim()} onClick={() => { setError(""); try { const text = pastedImport.trim(); const parsed = text.startsWith("{") || text.startsWith("[") ? parseJson(text, enteredBy) : parseCsv(text, enteredBy, "pasted.csv"); if (!parsed.length) throw new Error("No valid transactions were found."); onImport(parsed); setPastedImport(""); } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not import these entries."); } }}>Import pasted transactions</button></details></section>
       <div className="import-grid">
         <section className="panel upload-panel"><div className="upload-art"><Upload /></div><span>CSV OR JSON</span><h3>Import transactions</h3><p>Choose a Living Current file or a bank statement export. Past dates are filed into Monthly archive automatically, and imports do not alter your reconciled account balances.</p><button className="primary-button" onClick={() => inputRef.current?.click()}><Upload /> Choose file</button><input ref={inputRef} type="file" accept=".csv,.json,text/csv,application/json" hidden onChange={(event) => void importFile(event.target.files?.[0])} />{error && <div className="form-error" role="alert">{error}</div>}</section>
         <section className="panel export-panel"><div className="export-heading"><Download /><div><span>BACKUP & TEMPLATE</span><h3>{data.transactions.length} transactions ready</h3></div></div><p>Export a full copy, or use the template with ChatGPT to prepare clean entries without sharing bank credentials.</p><button onClick={downloadTemplate}><FileSpreadsheet /> Download blank template</button><button onClick={() => download("csv")}><FileSpreadsheet /> Export household CSV</button><button onClick={() => download("json")}><FileJson /> Export household JSON</button><div className="privacy-note"><ShieldCheck /><span><strong>No bank credentials</strong>Your file contains only the descriptions, categories, dates, and amounts you chose to import.</span></div></section>
@@ -573,7 +574,7 @@ function BillDialog({ onClose, onSave }: { onClose: () => void; onSave: (bill: B
 }
 
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) { return <div className="modal-layer" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><header><div><span>HOUSEHOLD ENTRY</span><h2 id="modal-title">{title}</h2></div><button aria-label="Close" onClick={onClose}><X /></button></header>{children}</section></div>; }
-function BrandMark() { return <div className="brand-mark" aria-hidden="true"><svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="27" /><path d="M18 39c7 6 20 7 29-1M17 26c8-7 23-8 31 0" /><text x="32" y="37">LC</text></svg></div>; }
+function BrandMark() { return <div className="brand-mark" aria-hidden="true"><img src={`${import.meta.env.BASE_URL}coin.svg`} alt="" /></div>; }
 function NavButton({ active, icon, label, onClick }: { active: boolean; icon: React.ReactNode; label: string; onClick: () => void }) { return <button className={`nav-button ${active ? "active" : ""}`} onClick={onClick}>{icon}<span>{label}</span></button>; }
 function Metric({ label, value, tone }: { label: string; value: number; tone?: string }) { const displayValue = Math.abs(value) < .005 ? 0 : value; return <div><span>{label}</span><strong className={tone ? `amount-${tone}` : ""}>{displayValue > 0 && tone === "positive" ? "+" : ""}{currency.format(displayValue)}</strong></div>; }
 function PanelHeader({ eyebrow, title, action, onAction }: { eyebrow: string; title: string; action?: string; onAction?: () => void }) { return <header className="panel-header"><div><span>{eyebrow}</span><h3>{title}</h3></div>{action && <button onClick={onAction}>{action}<ChevronRight /></button>}</header>; }
