@@ -73,6 +73,7 @@ type StoreOptions = {
 export type DataStore = {
   initialData: HouseholdData;
   save: (data: HouseholdData) => Promise<void>;
+  refresh: () => Promise<void>;
   destroy: () => void;
 };
 
@@ -87,6 +88,7 @@ export async function createDataStore({ onData, onSync, onIdentity }: StoreOptio
     return {
       initialData,
       save: async (data) => writeLocal(data),
+      refresh: async () => onData(readLocal()),
       destroy: () => undefined,
     };
   }
@@ -131,6 +133,22 @@ export async function createDataStore({ onData, onSync, onIdentity }: StoreOptio
           onSync("needs-setup");
         }
       },
+      refresh: async () => {
+        onSync("connecting");
+        try {
+          const snapshot = await getDoc(reference);
+          if (!snapshot.exists()) {
+            onSync("needs-setup");
+            return;
+          }
+          const remote = snapshot.data() as HouseholdData;
+          writeLocal(remote);
+          onData(remote);
+          onSync("synced");
+        } catch {
+          onSync("offline");
+        }
+      },
       destroy: () => unsubscribe?.(),
     };
   } catch {
@@ -138,6 +156,7 @@ export async function createDataStore({ onData, onSync, onIdentity }: StoreOptio
     return {
       initialData,
       save: async (data) => writeLocal(data),
+      refresh: async () => onData(readLocal()),
       destroy: () => unsubscribe?.(),
     };
   }

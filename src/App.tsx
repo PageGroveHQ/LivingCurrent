@@ -20,6 +20,7 @@ import {
   Menu,
   Plus,
   ReceiptText,
+  RefreshCw,
   Search,
   Settings,
   ShieldCheck,
@@ -43,7 +44,7 @@ import type { User } from "firebase/auth";
 import { getDailyQuoteSet } from "./quotes";
 import type { Bill, HouseholdData, SyncState, Transaction } from "./types";
 
-type View = "overview" | "activity" | "bills" | "import" | "settings";
+type View = "overview" | "activity" | "bills" | "import" | "sync" | "settings";
 type AuthIdentity = Pick<User, "uid" | "email" | "isAnonymous">;
 
 const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
@@ -63,6 +64,7 @@ function App() {
   const [authUser, setAuthUser] = useState<AuthIdentity | null>(null);
   const [storeReady, setStoreReady] = useState(false);
   const [sync, setSync] = useState<SyncState>("connecting");
+  const [lastSyncAt, setLastSyncAt] = useState<Date | null>(null);
   const [deviceUid, setDeviceUid] = useState("");
   const [transactionOpen, setTransactionOpen] = useState(false);
   const [billOpen, setBillOpen] = useState(false);
@@ -82,7 +84,11 @@ function App() {
     setSync("connecting");
     createDataStore({
       onData: (next) => active && setData(next),
-      onSync: (state) => active && setSync(state),
+      onSync: (state) => {
+        if (!active) return;
+        setSync(state);
+        if (state === "synced") setLastSyncAt(new Date());
+      },
       onIdentity: (uid) => active && setDeviceUid(uid),
     }).then(async (result) => {
       if (!active) return;
@@ -136,6 +142,10 @@ function App() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  const refreshCloud = async () => {
+    await store.current?.refresh();
+  };
+
   if (loading) return <LoadingScreen ready={authReady} onContinue={() => setLoading(false)} />;
 
   if (firebaseConfigured && (!authUser || authUser.isAnonymous)) return <AuthScreen hasAnonymousHousehold={Boolean(authUser?.isAnonymous)} onAuthenticated={(user) => setAuthUser({ uid: user.uid, email: user.email, isAnonymous: user.isAnonymous })} />;
@@ -157,10 +167,11 @@ function App() {
           <NavButton active={view === "import"} icon={<Upload />} label="Import & export" onClick={() => navigate("import")} />
         </nav>
         <div className="sidebar-spacer" />
-        <div className={`sync-card sync-${sync}`}>
+        <button className={`sync-card sync-${sync} ${view === "sync" ? "active" : ""}`} onClick={() => navigate("sync")}>
           {sync === "synced" ? <CloudCheck /> : <Cloud />}
           <div><strong>{syncLabel(sync)}</strong><span>{firebaseConfigured ? "Firebase household" : "This device only"}</span></div>
-        </div>
+          <ChevronRight className="sync-card-arrow" />
+        </button>
         <NavButton active={view === "settings"} icon={<Settings />} label="Settings" onClick={() => navigate("settings")} />
       </aside>
 
@@ -183,6 +194,7 @@ function App() {
         {view === "activity" && <Activity data={data} onDelete={(id) => updateData((current) => ({ ...current, transactions: current.transactions.filter((item) => item.id !== id) }), "Transaction removed")} />}
         {view === "bills" && <Bills data={data} onAdd={() => setBillOpen(true)} onToggle={(id) => updateData((current) => ({ ...current, bills: current.bills.map((bill) => bill.id === id ? { ...bill, paid: !bill.paid } : bill) }), "Bill updated")} />}
         {view === "import" && <ImportExport data={data} onImport={(transactions) => updateData((current) => ({ ...current, transactions: [...transactions, ...current.transactions] }), `${transactions.length} transactions imported`)} />}
+        {view === "sync" && <SyncView data={data} sync={sync} email={authUser?.email || ""} lastSyncAt={lastSyncAt} onRefresh={refreshCloud} />}
         {view === "settings" && <SettingsView data={data} sync={sync} email={authUser?.email || ""} uid={deviceUid} onSignOut={() => void signOutOfHousehold()} onSave={(values) => updateData((current) => ({ ...current, ...values }), "Settings saved")} />}
       </main>
 
@@ -406,6 +418,39 @@ function SettingsView({ data, sync, email, uid, onSave, onSignOut }: { data: Hou
   );
 }
 
+function SyncView({ data, sync, email, lastSyncAt, onRefresh }: { data: HouseholdData; sync: SyncState; email: string; lastSyncAt: Date | null; onRefresh: () => Promise<void> }) {
+  const [refreshing, setRefreshing] = useState(false);
+  const runRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await onRefresh();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+  const formatMoment = (value: Date | string | null) => {
+    if (!value) return "Waiting for first confirmation";
+    const date = typeof value === "string" ? new Date(value) : value;
+    return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit" }).format(date);
+  };
+  return (
+    <div className="page-content sync-page">
+      <section className="section-intro"><div><span>CLOUD SAVE</span><h2>Your household, in step.</h2><p>Living Current listens for Firestore changes and keeps this device aligned automatically.</p></div><button className="primary-button sync-now" disabled={refreshing || sync === "connecting"} onClick={() => void runRefresh()}><RefreshCw className={refreshing || sync === "connecting" ? "is-spinning" : ""} />{refreshing ? "Syncing…" : "Sync now"}</button></section>
+      <section className={`sync-hero sync-hero-${sync}`}>
+        <div className="sync-pulse" aria-hidden="true"><CloudCheck /></div>
+        <div><span>LIVE CONNECTION</span><h3>{syncLabel(sync)}</h3><p>{sync === "synced" ? "The latest household record has been confirmed by Cloud Firestore." : sync === "connecting" ? "Checking Cloud Firestore for the newest household record." : "Living Current will keep trying while preserving the latest local copy."}</p></div>
+        <div className="sync-freshness"><small>LAST CONFIRMED SYNC</small><strong>{formatMoment(lastSyncAt)}</strong><span>Real-time listener active</span></div>
+      </section>
+      <div className="sync-grid">
+        <section className="panel sync-detail-card"><span>HOUSEHOLD RECORD</span><h3>Latest saved change</h3><strong>{formatMoment(data.updatedAt)}</strong><p>This timestamp comes from the shared household document and updates whenever either device saves a change.</p></section>
+        <section className="panel sync-detail-card"><span>ACCOUNT</span><h3>Shared access</h3><strong>{email || "Local preview"}</strong><p>Both devices should use this same Firebase email login to reach the household.</p></section>
+        <section className="panel sync-detail-card"><span>DESTINATION</span><h3>Cloud Firestore</h3><strong>{householdId}</strong><p>Data is stored in the isolated Living Current Firebase project, separate from your other apps.</p></section>
+      </div>
+      <section className="panel sync-explainer"><div><RefreshCw /><div><strong>Automatic by default</strong><span>Changes from either signed-in device arrive through a real-time Firestore listener. “Sync now” performs an additional direct freshness check.</span></div></div><div><ShieldCheck /><div><strong>Financial entries only</strong><span>No bank login, account number, or connected financial institution is used.</span></div></div></section>
+    </div>
+  );
+}
+
 function TransactionDialog({ name, onClose, onSave }: { name: string; onClose: () => void; onSave: (transaction: Transaction) => void }) {
   const [kind, setKind] = useState<"expense" | "income">("expense");
   const [description, setDescription] = useState("");
@@ -431,7 +476,7 @@ function PanelHeader({ eyebrow, title, action, onAction }: { eyebrow: string; ti
 function TransactionRow({ item }: { item: Transaction }) { return <div className="transaction-row"><div className={`transaction-icon ${item.amount > 0 ? "income" : "expense"}`}>{item.amount > 0 ? <ArrowDownLeft /> : <ArrowUpRight />}</div><div><strong>{item.description}</strong><span>{item.category} · {item.enteredBy}</span></div><time>{shortDate.format(new Date(`${item.date}T12:00:00`))}</time><b className={item.amount > 0 ? "amount-positive" : "amount-negative"}>{item.amount > 0 ? "+" : ""}{currency.format(item.amount)}</b></div>; }
 function BillRow({ bill, onToggle }: { bill: Bill; onToggle: (id: string) => void }) { const days = daysUntil(bill.dueDate); return <div className="bill-row"><button className="bill-check" aria-label={`Mark ${bill.name} paid`} onClick={() => onToggle(bill.id)}><Check /></button><div><strong>{bill.name}</strong><span>{bill.category} · {days < 0 ? `${Math.abs(days)} days overdue` : `Due in ${days} days`}</span></div><b>{currency.format(bill.amount)}</b></div>; }
 function EmptyState({ icon, title, copy }: { icon: React.ReactNode; title: string; copy: string }) { return <div className="empty-state">{icon}<strong>{title}</strong><span>{copy}</span></div>; }
-function viewTitle(view: View) { return ({ overview: "Good morning", activity: "Household activity", bills: "Upcoming bills", import: "Import & export", settings: "Settings" } as const)[view]; }
+function viewTitle(view: View) { return ({ overview: "Good morning", activity: "Household activity", bills: "Upcoming bills", import: "Import & export", sync: "Cloud sync", settings: "Settings" } as const)[view]; }
 function syncLabel(sync: SyncState) { return ({ local: "Local preview", connecting: "Connecting", synced: "Cloud save active", "needs-setup": "Enrollment needed", offline: "Working offline" } as const)[sync]; }
 function csvEscape(value: string) { return `"${value.replaceAll('"', '""')}"`; }
 function parseJson(text: string, enteredBy: string): Transaction[] { const parsed = JSON.parse(text); const rows = Array.isArray(parsed) ? parsed : parsed.transactions; if (!Array.isArray(rows)) throw new Error("JSON must contain a transactions array."); return rows.map((row) => normalizeImport(row, enteredBy)).filter(Boolean) as Transaction[]; }
