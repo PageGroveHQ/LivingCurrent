@@ -202,7 +202,8 @@ svg { width: 20px; height: 20px; stroke-width: 1.8; }
 .bill-card-foot button { padding: 8px 10px; border: 1px solid #ccd5cd; border-radius: 9px; color: var(--deep); background: transparent; font-size: .7rem; }
 
 .import-grid { display: grid; grid-template-columns: 1.05fr .95fr; gap: 22px; }
-.settings-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 22px; align-items: start; }
+.settings-grid { display:grid;grid-template-columns:minmax(0,1.25fr) minmax(300px,.9fr);gap:24px;align-items:start;max-width:1100px; }
+.settings-side { display:grid;gap:20px; }.settings-side .settings-form,.settings-side .connection-panel { padding:24px; }.household-details { padding:32px; }.settings-form > p { margin:0;color:var(--muted);font-size:.82rem;line-height:1.6; }.household-details .settings-note { margin:0; }.settings-side .connection-icon { display:none; }.settings-side .connection-panel h3 { font-size:1.4rem; }.settings-side .connection-panel dl > div { grid-template-columns:90px 1fr; }.settings-side .connection-panel p { margin-bottom:12px; }.settings-side .settings-form h3 { font-size:1.4rem; }
 .upload-panel, .export-panel, .settings-form, .connection-panel { padding: 30px; }
 .upload-panel { text-align: center; }
 .upload-art { width: 92px; height: 92px; display: grid; place-items: center; margin: 4px auto 24px; border: 1px solid rgba(200,142,84,.35); border-radius: 50%; color: #9a6636; background: radial-gradient(circle, #f5e6d4 0 48%, #ecefe9 49% 63%, #f7f8f4 64%); }

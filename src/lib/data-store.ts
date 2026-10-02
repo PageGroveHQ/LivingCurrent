@@ -83,7 +83,21 @@ const readLocal = (): HouseholdData => {
   }
 };
 
-const writeLocal = (data: HouseholdData) => localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+const writeLocal = (data: HouseholdData) => {
+  const previous = localStorage.getItem(STORAGE_KEY);
+  const next = JSON.stringify(data);
+  if (previous && previous !== next) {
+    try {
+      const old = JSON.parse(previous) as HouseholdData;
+      if (JSON.stringify({ ...old, updatedAt: "" }) !== JSON.stringify({ ...data, updatedAt: "" })) {
+        const key = "living-current-recovery-history";
+        const history = JSON.parse(localStorage.getItem(key) || "[]") as { savedAt: string; data: HouseholdData }[];
+        localStorage.setItem(key, JSON.stringify([{ savedAt: new Date().toISOString(), data: old }, ...history].slice(0, 20)));
+      }
+    } catch { /* A malformed backup must not block the active record. */ }
+  }
+  localStorage.setItem(STORAGE_KEY, next);
+};
 
 const migrateHouseholdData = (value: Partial<HouseholdData> | undefined): HouseholdData => {
   const defaults = createDemoData();
@@ -115,6 +129,7 @@ export type DataStore = {
   initialData: HouseholdData;
   save: (data: HouseholdData) => Promise<void>;
   refresh: () => Promise<void>;
+  flush: () => Promise<void>;
   destroy: () => void;
 };
 
@@ -133,6 +148,7 @@ export async function createDataStore({ onData, onSync, onIdentity }: StoreOptio
       initialData,
       save: async (data) => writeLocal(data),
       refresh: async () => onData(readLocal()),
+      flush: async () => undefined,
       destroy: () => undefined,
     };
   }
@@ -243,6 +259,11 @@ export async function createDataStore({ onData, onSync, onIdentity }: StoreOptio
           onSync("offline");
         }
       },
+      flush: async () => {
+        await saveQueue;
+        const saved = localStorage.getItem(outboxKey);
+        if (saved) { const pending = JSON.parse(saved); await persistChanges(pending.base, pending.next); localStorage.removeItem(outboxKey); }
+      },
       destroy: () => unsubscribe?.(),
     };
   } catch {
@@ -251,6 +272,7 @@ export async function createDataStore({ onData, onSync, onIdentity }: StoreOptio
       initialData,
       save: async (data) => { const base = latestData; latestData = data; writeLocal(data); if (uid) { const key = `${PENDING_KEY}-${uid}`; const old = localStorage.getItem(key); localStorage.setItem(key, JSON.stringify({ base: old ? JSON.parse(old).base : base, next: data })); } },
       refresh: async () => onData(readLocal()),
+      flush: async () => { throw new Error("Cloud save is unavailable. Reconnect before updating."); },
       destroy: () => unsubscribe?.(),
     };
   }
