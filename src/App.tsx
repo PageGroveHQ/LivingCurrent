@@ -312,7 +312,7 @@ function LoadingScreen({ ready, onContinue }: { ready: boolean; onContinue: () =
   return (
     <main className="loading-screen">
       <div className="loading-brand"><BrandMark /><strong>LIVING CURRENT</strong><span>A shared view of what’s ahead.</span></div>
-      <div className="loading-coin" aria-hidden="true"><BrandMark /></div>
+      <div className="loading-coin" aria-hidden="true"><div className="flipping-coin">{Array.from({ length: 9 }, (_, index) => <img key={index} className="coin-edge" src={`${import.meta.env.BASE_URL}coin-face.png`} alt="" style={{ transform: `translateZ(${index - 4}px)` }} />)}<img className="coin-front" src={`${import.meta.env.BASE_URL}coin-face.png`} alt="" /><img className="coin-back" src={`${import.meta.env.BASE_URL}coin-face.png`} alt="" /></div><span className="coin-shadow" /></div>
       <div className="loading-quotes">
         <article><small>01 · SCRIPTURE</small><blockquote>“{quotes.scripture.text}”</blockquote><cite>{quotes.scripture.source}</cite></article>
         <article><small>02 · MOTIVATION</small><blockquote>“{quotes.motivation.text}”</blockquote><cite>{quotes.motivation.source}</cite></article>

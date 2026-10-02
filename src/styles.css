@@ -37,11 +37,22 @@ svg { width: 20px; height: 20px; stroke-width: 1.8; }
 .brand-mark { position: relative; flex: 0 0 auto; width: 40px; height: 40px; }
 .brand-mark img { display:block;width:100%;height:100%; }
 .paste-import { padding:20px;margin-bottom:20px; }.paste-import summary { cursor:pointer;font-weight:600; }.paste-import textarea { display:block;width:100%;margin:10px 0 16px;padding:12px;border:1px solid #c4d1c8;border-radius:10px;font-size:16px;background:#fafbf7;color:#173a29; }.paste-import p { color:#60766b;font-size:.85rem; }
-.loading-coin { position:relative;margin:clamp(32px,6vh,64px) 0 32px; }
-.loading-coin .brand-mark { width:180px;height:180px;filter:drop-shadow(0 18px 30px rgba(0,0,0,.3)); }
-.loading-coin::after { content:"";position:absolute;inset:14%;border-radius:50%;background:linear-gradient(115deg,transparent 35%,rgba(255,245,201,.3) 49%,transparent 63%);pointer-events:none;animation:coin-light 7s ease-in-out infinite; }
-@keyframes coin-light { 0%,100% { opacity:0;transform:translateX(-10px); } 45%,55% { opacity:.6;transform:translateX(10px); } }
-@media (prefers-reduced-motion:reduce) { .loading-coin::after { animation:none;opacity:0; } }
+.loading-coin { position:relative;width:164px;height:180px;margin:clamp(32px,6vh,64px) 0 32px;perspective:850px; }
+.flipping-coin { position:relative;width:164px;height:164px;transform-style:preserve-3d;animation:coin-flip 6s cubic-bezier(.4,0,.2,1) infinite; }
+.flipping-coin img { position:absolute;inset:0;width:100%;height:100%; }
+.coin-edge { filter:brightness(.66) saturate(1.15); }
+.coin-front { transform:translateZ(5px);backface-visibility:hidden; }
+.coin-back { transform:rotateX(180deg) translateZ(5px);backface-visibility:hidden; }
+.coin-shadow { position:absolute;bottom:0;left:15%;width:70%;height:12px;border-radius:50%;background:rgba(0,0,0,.35);filter:blur(6px);animation:coin-shadow 6s ease-in-out infinite; }
+@keyframes coin-flip {
+  0%,18% { transform:translateY(0) rotateX(0) rotateZ(-4deg);animation-timing-function:cubic-bezier(.2,.65,.35,1); }
+  42% { transform:translateY(-60px) rotateX(360deg) rotateZ(3deg);animation-timing-function:cubic-bezier(.65,0,.8,.35); }
+  66% { transform:translateY(0) rotateX(720deg) rotateZ(-4deg);animation-timing-function:ease-out; }
+  72% { transform:translateY(-5px) rotateX(720deg) rotateZ(-4deg); }
+  78%,100% { transform:translateY(0) rotateX(720deg) rotateZ(-4deg); }
+}
+@keyframes coin-shadow { 0%,18%,66%,100% { transform:scale(1);opacity:.7; } 42% { transform:scale(.5);opacity:.2; } }
+@media (prefers-reduced-motion:reduce) { .flipping-coin,.coin-shadow { animation:none; } }
 .brand-mark svg { width: 100%; height: 100%; overflow: visible; }
 .brand-mark circle { fill: rgba(200,142,84,.06); stroke: #c99055; stroke-width: 1.7; }
 .brand-mark path { fill: none; stroke: rgba(231,201,157,.72); stroke-width: 1.35; stroke-linecap: round; }
