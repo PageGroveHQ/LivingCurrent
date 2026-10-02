@@ -21,6 +21,7 @@ import {
   Mail,
   Menu,
   Plus,
+  Pencil,
   ReceiptText,
   RefreshCw,
   Search,
@@ -66,6 +67,7 @@ const monthLabel = (key: string) => new Intl.DateTimeFormat("en-US", { month: "l
 const transactionKind = (item: Transaction): TransactionKind => item.type || (item.amount < 0 ? "expense" : "income");
 const transactionAccount = (item: Transaction): AccountName => item.account || "checking";
 const plannedBill = (bill: Bill) => !bill.paid && daysUntil(bill.dueDate) <= 31;
+const sortTransactions = (items: Transaction[]) => [...items].sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt || "").localeCompare(a.createdAt || "") || b.id.localeCompare(a.id));
 
 function calculateAccountBalances(data: HouseholdData) {
   let checking = data.checkingStartingBalance;
@@ -93,10 +95,11 @@ function mergeImportedTransactions(current: Transaction[], incoming: Transaction
   const merged = [...current];
   for (const item of incoming) {
     if (merged.some((existing) => existing.id === item.id)) continue;
+    if (merged.some((existing) => existing.date === item.date && Math.abs(existing.amount - item.amount) < .005 && transactionAccount(existing) === transactionAccount(item) && existing.description.toLowerCase().replace(/[^a-z0-9]/g, "") === item.description.toLowerCase().replace(/[^a-z0-9]/g, ""))) continue;
     const importedDate = new Date(`${item.date}T12:00:00`).getTime();
     const merchant = item.description.toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).find((word) => word.length > 3) || item.description.toLowerCase();
     const pendingIndex = merged.findIndex((existing) => existing.status === "pending" && Math.abs(existing.amount - item.amount) < .005 && Math.abs(new Date(`${existing.date}T12:00:00`).getTime() - importedDate) <= 4 * 86_400_000 && existing.description.toLowerCase().includes(merchant));
-    if (pendingIndex >= 0) merged[pendingIndex] = { ...item, id: merged[pendingIndex].id, enteredBy: merged[pendingIndex].enteredBy, affectsBalance: merged[pendingIndex].affectsBalance, status: "posted" };
+    if (pendingIndex >= 0) merged[pendingIndex] = { ...item, id: merged[pendingIndex].id, enteredBy: merged[pendingIndex].enteredBy, createdAt: merged[pendingIndex].createdAt, notes: merged[pendingIndex].notes || item.notes, affectsBalance: merged[pendingIndex].affectsBalance, status: item.status === "pending" ? "pending" : "posted" };
     else merged.push(item);
   }
   return merged.sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt));
@@ -113,11 +116,13 @@ function App() {
   const [lastSyncAt, setLastSyncAt] = useState<Date | null>(null);
   const [deviceUid, setDeviceUid] = useState("");
   const [transactionOpen, setTransactionOpen] = useState(false);
+  const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [billOpen, setBillOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [toast, setToast] = useState("");
   const [deviceRole, setDeviceRole] = useState<DeviceRole>(() => localStorage.getItem("living-current-device-role") === "partner" ? "partner" : "primary");
   const store = useRef<DataStore | null>(null);
+  const dataRef = useRef(data);
 
   useEffect(() => observeHouseholdAuth((user) => {
     setAuthUser(user ? { uid: user.uid, email: user.email, isAnonymous: user.isAnonymous } : null);
@@ -130,7 +135,7 @@ function App() {
     setStoreReady(false);
     setSync("connecting");
     createDataStore({
-      onData: (next) => active && setData(next),
+      onData: (next) => { if (active) { dataRef.current = next; setData(next); } },
       onSync: (state) => {
         if (!active) return;
         setSync(state);
@@ -138,8 +143,9 @@ function App() {
       },
       onIdentity: (uid) => active && setDeviceUid(uid),
     }).then(async (result) => {
-      if (!active) return;
+      if (!active) { result.destroy(); return; }
       store.current = result;
+      dataRef.current = result.initialData;
       setData(result.initialData);
       setStoreReady(true);
     });
@@ -156,11 +162,10 @@ function App() {
   }, [toast]);
 
   const updateData = (updater: (current: HouseholdData) => HouseholdData, message?: string) => {
-    setData((current) => {
-      const next = { ...updater(current), updatedAt: new Date().toISOString() };
-      void store.current?.save(next);
-      return next;
-    });
+    const next = { ...updater(dataRef.current), updatedAt: new Date().toISOString() };
+    dataRef.current = next;
+    setData(next);
+    void store.current?.save(next);
     if (message) setToast(message);
   };
 
@@ -176,8 +181,9 @@ function App() {
   }, [data]);
 
   const addTransaction = (transaction: Transaction) => {
-    updateData((current) => ({ ...current, transactions: [transaction, ...current.transactions] }), transactionKind(transaction) === "transfer" ? "Transfer recorded" : "Transaction added");
+    updateData((current) => ({ ...current, transactions: sortTransactions([...current.transactions.filter((item) => item.id !== transaction.id), transaction]) }), editingTransaction ? "Transaction updated" : "Transaction added");
     setTransactionOpen(false);
+    setEditingTransaction(null);
   };
 
   const addBill = (bill: Bill) => {
@@ -241,8 +247,8 @@ function App() {
         </header>
 
         {view === "overview" && <Overview data={data} totals={totals} onNavigate={navigate} onAdd={() => setTransactionOpen(true)} onToggleBill={(id) => updateData((current) => ({ ...current, bills: current.bills.map((bill) => bill.id === id ? { ...bill, paid: !bill.paid } : bill) }), "Bill updated")} />}
-        {view === "activity" && <Activity data={data} onDelete={(id) => updateData((current) => ({ ...current, transactions: current.transactions.filter((item) => item.id !== id) }), "Transaction removed")} />}
-        {view === "archive" && <ArchiveView data={data} />}
+        {view === "activity" && <Activity data={data} onEdit={setEditingTransaction} onDelete={(id) => updateData((current) => ({ ...current, transactions: current.transactions.filter((item) => item.id !== id) }), "Transaction removed")} />}
+        {view === "archive" && <ArchiveView data={data} onEdit={setEditingTransaction} />}
         {view === "bills" && <Bills data={data} onAdd={() => setBillOpen(true)} onToggle={(id) => updateData((current) => ({ ...current, bills: current.bills.map((bill) => bill.id === id ? { ...bill, paid: !bill.paid } : bill) }), "Bill updated")} />}
         {view === "import" && <ImportExport data={data} enteredBy={deviceRole === "primary" ? data.displayName : data.partnerName} onImport={(transactions) => updateData((current) => ({ ...current, transactions: mergeImportedTransactions(current.transactions, transactions) }), `${transactions.length} transactions reviewed for import`)} />}
         {view === "sync" && <SyncView data={data} sync={sync} email={authUser?.email || ""} lastSyncAt={lastSyncAt} onRefresh={refreshCloud} />}
@@ -257,7 +263,7 @@ function App() {
         <NavButton active={view === "settings"} icon={<Settings />} label="Settings" onClick={() => navigate("settings")} />
       </nav>
 
-      {transactionOpen && <TransactionDialog name={deviceRole === "primary" ? data.displayName : data.partnerName} onClose={() => setTransactionOpen(false)} onSave={addTransaction} />}
+      {(transactionOpen || editingTransaction) && <TransactionDialog key={editingTransaction?.id || "new"} existing={editingTransaction || undefined} name={deviceRole === "primary" ? data.displayName : data.partnerName} onClose={() => { setTransactionOpen(false); setEditingTransaction(null); }} onSave={addTransaction} />}
       {billOpen && <BillDialog onClose={() => setBillOpen(false)} onSave={addBill} />}
       {toast && <div className="toast" role="status"><Check /> {toast}</div>}
     </div>
@@ -328,7 +334,7 @@ function LoadingScreen({ ready, onContinue }: { ready: boolean; onContinue: () =
 }
 
 function Overview({ data, totals, onNavigate, onAdd, onToggleBill }: { data: HouseholdData; totals: { income: number; spending: number; reserved: number; current: number; available: number; checking: number; savings: number }; onNavigate: (view: View) => void; onAdd: () => void; onToggleBill: (id: string) => void }) {
-  const currentTransactions = data.transactions.filter((item) => monthKey(item.date) === monthKey());
+  const currentTransactions = sortTransactions(data.transactions.filter((item) => monthKey(item.date) === monthKey()));
   const recent = currentTransactions.slice(0, 5);
   const upcoming = data.bills.filter(plannedBill).slice(0, 3);
   const categoryTotals = useMemo(() => {
@@ -357,11 +363,7 @@ function Overview({ data, totals, onNavigate, onAdd, onToggleBill }: { data: Hou
         <section className="panel flow-panel">
           <PanelHeader eyebrow={monthLabel(monthKey()).toUpperCase()} title="Household current" action="View activity" onAction={() => onNavigate("activity")} />
           <div className="flow-summary"><div><ArrowUpRight /><span>Income</span><strong>{currency.format(totals.income)}</strong></div><div><ArrowDownLeft /><span>Outflow</span><strong>{currency.format(totals.spending)}</strong></div></div>
-          <div className="flow-chart" aria-label="Decorative view of recent cash flow">
-            {[38, 64, 46, 78, 57, 84, 62, 92, 69, 76, 54, 88].map((height, index) => <i key={index} style={{ height: `${height}%` }} className={index === 9 ? "active" : ""} />)}
-            <span className="flow-line" />
-          </div>
-          <div className="chart-axis"><span>Week 1</span><span>Week 2</span><span>Week 3</span><span>Now</span></div>
+          <CashFlowChart transactions={currentTransactions} />
         </section>
 
         <section className="panel bills-panel">
@@ -389,27 +391,27 @@ function Overview({ data, totals, onNavigate, onAdd, onToggleBill }: { data: Hou
   );
 }
 
-function Activity({ data, onDelete }: { data: HouseholdData; onDelete: (id: string) => void }) {
+function Activity({ data, onDelete, onEdit }: { data: HouseholdData; onDelete: (id: string) => void; onEdit: (item: Transaction) => void }) {
   const [query, setQuery] = useState("");
-  const current = data.transactions.filter((item) => monthKey(item.date) === monthKey());
+  const current = sortTransactions(data.transactions.filter((item) => monthKey(item.date) === monthKey()));
   const visible = current.filter((item) => `${item.description} ${item.category}`.toLowerCase().includes(query.toLowerCase()));
   return (
     <div className="page-content">
       <section className="section-intro"><div><span>{monthLabel(monthKey()).toUpperCase()}</span><h2>This month’s activity.</h2><p>{current.length} entries shared across your household. Earlier months are in Monthly archive.</p></div><label className="search-field"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search activity" /></label></section>
       <section className="panel ledger-panel">
         <div className="ledger-head"><span>Description</span><span>Category</span><span>Entered by</span><span>Date</span><span>Amount</span><span /></div>
-        {visible.map((item) => <LedgerRow key={item.id} item={item} onDelete={onDelete} />)}
+        {visible.map((item) => <LedgerRow key={item.id} item={item} onEdit={onEdit} onDelete={onDelete} />)}
         {!visible.length && <EmptyState icon={<Search />} title="No entries found" copy="Try a different search." />}
       </section>
     </div>
   );
 }
 
-function ArchiveView({ data }: { data: HouseholdData }) {
+function ArchiveView({ data, onEdit }: { data: HouseholdData; onEdit: (item: Transaction) => void }) {
   const months = useMemo(() => [...new Set(data.transactions.map((item) => monthKey(item.date)).filter((key) => key < monthKey()))].sort().reverse(), [data.transactions]);
   const [selected, setSelected] = useState(months[0] || "");
   const selectedMonth = months.includes(selected) ? selected : months[0] || "";
-  const transactions = data.transactions.filter((item) => monthKey(item.date) === selectedMonth);
+  const transactions = sortTransactions(data.transactions.filter((item) => monthKey(item.date) === selectedMonth));
   const income = transactions.filter((item) => transactionKind(item) === "income").reduce((sum, item) => sum + Math.abs(item.amount), 0);
   const spending = Math.max(0, transactions.filter((item) => transactionKind(item) === "expense").reduce((sum, item) => sum - item.amount, 0));
   const transfers = transactions.filter((item) => transactionKind(item) === "transfer").reduce((sum, item) => sum + Math.abs(item.amount), 0);
@@ -424,7 +426,7 @@ function ArchiveView({ data }: { data: HouseholdData }) {
           <div><span>TRANSFERS</span><strong>{currency.format(transfers)}</strong></div>
           <div><span>NET ACTIVITY</span><strong className={income - spending >= 0 ? "amount-positive" : "amount-negative"}>{currency.format(income - spending)}</strong></div>
         </section>
-        <section className="panel ledger-panel archive-ledger"><div className="ledger-head"><span>Description</span><span>Category</span><span>Entered by</span><span>Date</span><span>Amount</span><span /></div>{transactions.map((item) => <LedgerRow key={item.id} item={item} />)}</section>
+        <section className="panel ledger-panel archive-ledger"><div className="ledger-head"><span>Description</span><span>Category</span><span>Entered by</span><span>Date</span><span>Amount</span><span /></div>{transactions.map((item) => <LedgerRow key={item.id} item={item} onEdit={onEdit} />)}</section>
       </>}
     </div>
   );
@@ -448,7 +450,7 @@ function ImportExport({ data, enteredBy, onImport }: { data: HouseholdData; ente
   const download = (kind: "json" | "csv") => {
     const content = kind === "json"
       ? JSON.stringify({ schemaVersion: 3, transactions: data.transactions }, null, 2)
-      : ["date,description,category,amount,type,account,transferTo,enteredBy", ...data.transactions.map((item) => [item.date, csvEscape(item.description), csvEscape(item.category), item.amount, transactionKind(item), transactionAccount(item), item.transferTo || "", csvEscape(item.enteredBy)].join(","))].join("\n");
+      : ["date,description,category,amount,type,account,transferTo,enteredBy,status,notes,createdAt", ...data.transactions.map((item) => [item.date, csvEscape(item.description), csvEscape(item.category), item.amount, transactionKind(item), transactionAccount(item), item.transferTo || "", csvEscape(item.enteredBy), item.status || "posted", csvEscape(item.notes || ""), item.createdAt].join(","))].join("\n");
     const url = URL.createObjectURL(new Blob([content], { type: kind === "json" ? "application/json" : "text/csv" }));
     const anchor = document.createElement("a");
     anchor.href = url;
@@ -489,6 +491,9 @@ function ImportExport({ data, enteredBy, onImport }: { data: HouseholdData; ente
 }
 
 function SettingsView({ data, sync, email, uid, deviceRole, onDeviceRoleChange, onSave, onSignOut }: { data: HouseholdData; sync: SyncState; email: string; uid: string; deviceRole: DeviceRole; onDeviceRoleChange: (role: DeviceRole) => void; onSave: (values: Partial<HouseholdData>) => void; onSignOut: () => void }) {
+  const [updatingApp, setUpdatingApp] = useState(false);
+  const [updateError, setUpdateError] = useState("");
+  const updateApp = async () => { setUpdatingApp(true); setUpdateError(""); try { const url = new URL(window.location.href); url.searchParams.set("app-update", String(Date.now())); const response = await fetch(url, { cache: "no-store" }); if (!response.ok) throw new Error("Could not download the latest app."); if ("serviceWorker" in navigator) { const registration = await navigator.serviceWorker.getRegistration(import.meta.env.BASE_URL); await registration?.update(); } if ("caches" in window) await Promise.all((await caches.keys()).filter((key) => key.startsWith("living-current-")).map((key) => caches.delete(key))); window.location.replace(url.toString()); } catch { setUpdatingApp(false); setUpdateError("Update could not be loaded. Check your connection and try again."); } };
   const [checkingBalance, setCheckingBalance] = useState(String(data.checkingStartingBalance));
   const [savingsBalance, setSavingsBalance] = useState(String(data.savingsStartingBalance));
   const [safetyBuffer, setSafetyBuffer] = useState(String(data.safetyBuffer));
@@ -498,6 +503,7 @@ function SettingsView({ data, sync, email, uid, deviceRole, onDeviceRoleChange, 
     <div className="page-content settings-page">
       <section className="section-intro"><div><span>HOUSEHOLD SETTINGS</span><h2>Shape the view you share.</h2><p>These values affect both enrolled devices.</p></div></section>
       <div className="settings-grid">
+        <section className="panel settings-form"><h3>App updates</h3><p>Load the latest published Living Current version. Your saved household records stay in place.</p><button type="button" className="primary-button" disabled={updatingApp || sync === "connecting" || sync === "offline"} onClick={() => void updateApp()}><RefreshCw />{updatingApp ? "Updating…" : "Update app"}</button>{updateError && <p role="alert">{updateError}</p>}</section>
         <form className="panel settings-form" onSubmit={(event) => { event.preventDefault(); onSave({ checkingStartingBalance: Number(checkingBalance), savingsStartingBalance: Number(savingsBalance), safetyBuffer: Number(safetyBuffer), displayName, partnerName }); }}><h3>Household details</h3><label>Your display name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></label><label>Partner display name<input value={partnerName} onChange={(event) => setPartnerName(event.target.value)} /></label><div className="form-row"><label>{monthLabel(data.balanceStartMonth)} opening checking<input inputMode="decimal" value={checkingBalance} onChange={(event) => setCheckingBalance(event.target.value)} /></label><label>{monthLabel(data.balanceStartMonth)} opening savings<input inputMode="decimal" value={savingsBalance} onChange={(event) => setSavingsBalance(event.target.value)} /></label></div><p className="settings-note">Current balances are calculated from these opening amounts plus every transaction recorded from {monthLabel(data.balanceStartMonth)} onward.</p><label>Safety buffer<input inputMode="decimal" value={safetyBuffer} onChange={(event) => setSafetyBuffer(event.target.value)} /></label><button className="primary-button" type="submit">Save household changes</button></form>
         <section className="panel settings-form device-identity"><h3>This device</h3><p>Choose who normally enters transactions on this phone or computer. This preference stays on this device, so the shared account can tell you apart.</p><div className="identity-toggle"><button type="button" className={deviceRole === "primary" ? "active" : ""} onClick={() => onDeviceRoleChange("primary")}><span>{displayName || "Primary"}</span><small>Use on this device</small></button><button type="button" className={deviceRole === "partner" ? "active" : ""} onClick={() => onDeviceRoleChange("partner")}><span>{partnerName || "Partner"}</span><small>Use on this device</small></button></div></section>
         <section className="panel connection-panel"><div className="connection-icon"><CloudCheck /></div><span>SYNC STATUS</span><h3>{syncLabel(sync)}</h3><p>{firebaseConfigured ? "Both devices can use the same household email and password. Firebase keeps the shared record synchronized." : "Add the Firebase values from .env.example to enable real-time household cloud save."}</p><dl><div><dt>Household</dt><dd>{householdId}</dd></div><div><dt>Signed in as</dt><dd>{email || uid || "Local preview"}</dd></div><div><dt>Storage</dt><dd>{firebaseConfigured ? "Cloud Firestore" : "Local preview"}</dd></div></dl>{firebaseConfigured && <button className="signout-button" type="button" onClick={onSignOut}><LogOut /> Sign out on this device</button>}</section>
@@ -539,31 +545,35 @@ function SyncView({ data, sync, email, lastSyncAt, onRefresh }: { data: Househol
   );
 }
 
-function TransactionDialog({ name, onClose, onSave }: { name: string; onClose: () => void; onSave: (transaction: Transaction) => void }) {
-  const [kind, setKind] = useState<TransactionKind>("expense");
-  const [description, setDescription] = useState("");
-  const [category, setCategory] = useState("Groceries");
-  const [customCategory, setCustomCategory] = useState("");
-  const [amount, setAmount] = useState("");
-  const [date, setDate] = useState(todayISO());
-  const [account, setAccount] = useState<AccountName>("checking");
-  const [transferTo, setTransferTo] = useState<AccountName>("savings");
+function TransactionDialog({ name, existing, onClose, onSave }: { name: string; existing?: Transaction; onClose: () => void; onSave: (transaction: Transaction) => void }) {
+  const [kind, setKind] = useState<TransactionKind>(existing ? transactionKind(existing) : "expense");
+  const [description, setDescription] = useState(existing?.description || "");
+  const [category, setCategory] = useState(existing && !categories.includes(existing.category) ? "Custom" : existing?.category || "Groceries");
+  const [customCategory, setCustomCategory] = useState(existing?.category || "");
+  const [amount, setAmount] = useState(existing ? String(Math.abs(existing.amount)) : "");
+  const [date, setDate] = useState(existing?.date || todayISO());
+  const [account, setAccount] = useState<AccountName>(existing?.account || "checking");
+  const [transferTo, setTransferTo] = useState<AccountName>(existing?.transferTo || "savings");
+  const [notes, setNotes] = useState(existing?.notes || "");
+  const [status, setStatus] = useState<"pending" | "posted">(existing?.status || "pending");
   const chooseAccount = (next: AccountName) => { setAccount(next); if (transferTo === next) setTransferTo(next === "checking" ? "savings" : "checking"); };
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const value = Math.abs(Number(amount));
     const finalCategory = kind === "transfer" ? "Transfer" : category === "Custom" ? customCategory.trim() : category;
     if (!description.trim() || !value || !finalCategory || (kind === "transfer" && account === transferTo)) return;
-    onSave({ id: makeId(), date, description: description.trim(), category: finalCategory, amount: kind === "expense" ? -value : value, type: kind, account, transferTo: kind === "transfer" ? transferTo : undefined, affectsBalance: true, status: "pending", enteredBy: name || "Household", createdAt: new Date().toISOString() });
+    onSave({ ...existing, id: existing?.id || makeId(), date, description: description.trim(), category: finalCategory, amount: kind === "expense" ? -value : value, type: kind, account, transferTo: kind === "transfer" ? transferTo : undefined, affectsBalance: true, status, notes: notes.trim(), enteredBy: existing?.enteredBy || name || "Household", createdAt: existing?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString() });
   };
-  return <Modal title="Record a movement" onClose={onClose}><form className="entry-form" onSubmit={submit}>
+  return <Modal title={existing ? "Edit transaction" : "Record a movement"} onClose={onClose}><form className="entry-form" onSubmit={submit}>
     <div className="type-toggle type-toggle-three"><button type="button" className={kind === "expense" ? "active" : ""} onClick={() => setKind("expense")}><ArrowUpRight /> Expense</button><button type="button" className={kind === "income" ? "active" : ""} onClick={() => setKind("income")}><ArrowDownLeft /> Income</button><button type="button" className={kind === "transfer" ? "active" : ""} onClick={() => setKind("transfer")}><ArrowRightLeft /> Transfer</button></div>
     <label>Description<input autoFocus value={description} onChange={(event) => setDescription(event.target.value)} placeholder={kind === "transfer" ? "Move rent funds" : "Publix"} required /></label>
     {kind === "transfer" ? <div className="form-row"><label>From<select value={account} onChange={(event) => chooseAccount(event.target.value as AccountName)}><option value="checking">Checking</option><option value="savings">Savings</option></select></label><label>To<select value={transferTo} onChange={(event) => setTransferTo(event.target.value as AccountName)}><option value="checking" disabled={account === "checking"}>Checking</option><option value="savings" disabled={account === "savings"}>Savings</option></select></label></div> : <div className="form-row"><label>Category<select value={category} onChange={(event) => setCategory(event.target.value)}>{categories.map((item) => <option key={item}>{item}</option>)}</select></label><label>Account<select value={account} onChange={(event) => setAccount(event.target.value as AccountName)}><option value="checking">Checking</option><option value="savings">Savings</option></select></label></div>}
     {category === "Custom" && kind !== "transfer" && <label>Custom category name<input value={customCategory} onChange={(event) => setCustomCategory(event.target.value)} placeholder="Pet care" required /></label>}
     <div className="form-row"><label>Amount<input inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="0.00" required /></label><label>Date<input type="date" value={date} onChange={(event) => setDate(event.target.value)} required /></label></div>
     <p className="entry-attribution">This entry will be recorded by <strong>{name || "Household"}</strong>.</p>
-    <button className="primary-button submit-button" type="submit">{kind === "transfer" ? "Record transfer" : "Add to household"}</button>
+    <label>Notes (optional)<textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={3} placeholder="Receipt details, purpose, or a reminder" /></label>
+    <label>Status<select value={status} onChange={(event) => setStatus(event.target.value as "pending" | "posted")}><option value="pending">Pending</option><option value="posted">Posted / cleared</option></select></label><p className="settings-note">Mark posted after you confirm it has cleared at your bank. Both statuses count toward your balance.</p>
+    <button className="primary-button submit-button" type="submit">{existing ? "Save transaction" : kind === "transfer" ? "Record transfer" : "Add to household"}</button>
   </form></Modal>;
 }
 
@@ -579,7 +589,16 @@ function NavButton({ active, icon, label, onClick }: { active: boolean; icon: Re
 function Metric({ label, value, tone }: { label: string; value: number; tone?: string }) { const displayValue = Math.abs(value) < .005 ? 0 : value; return <div><span>{label}</span><strong className={tone ? `amount-${tone}` : ""}>{displayValue > 0 && tone === "positive" ? "+" : ""}{currency.format(displayValue)}</strong></div>; }
 function PanelHeader({ eyebrow, title, action, onAction }: { eyebrow: string; title: string; action?: string; onAction?: () => void }) { return <header className="panel-header"><div><span>{eyebrow}</span><h3>{title}</h3></div>{action && <button onClick={onAction}>{action}<ChevronRight /></button>}</header>; }
 function TransactionRow({ item }: { item: Transaction }) { const kind = transactionKind(item); const tone = kind === "transfer" ? "" : item.amount > 0 ? "amount-positive" : "amount-negative"; return <div className="transaction-row"><div className={`transaction-icon ${kind}`}>{kind === "transfer" ? <ArrowRightLeft /> : kind === "income" ? <ArrowDownLeft /> : <ArrowUpRight />}</div><div><strong>{item.description}{item.status === "pending" && <small className="pending-badge">Pending</small>}</strong><span>{kind === "transfer" ? `${accountLabel(transactionAccount(item))} to ${accountLabel(item.transferTo || "savings")}` : `${item.category} · ${accountLabel(transactionAccount(item))}`} · {item.enteredBy}</span></div><time>{shortDate.format(new Date(`${item.date}T12:00:00`))}</time><b className={tone}>{item.amount > 0 && kind !== "transfer" ? "+" : ""}{currency.format(item.amount)}</b></div>; }
-function LedgerRow({ item, onDelete }: { item: Transaction; onDelete?: (id: string) => void }) { const kind = transactionKind(item); const tone = kind === "transfer" ? "" : item.amount > 0 ? "amount-positive" : "amount-negative"; return <div className="ledger-row"><div className={`transaction-icon ${kind}`}>{kind === "transfer" ? <ArrowRightLeft /> : kind === "income" ? <ArrowDownLeft /> : <ArrowUpRight />}</div><strong>{item.description}{item.status === "pending" && <small className="pending-badge">Pending</small>}</strong><span>{kind === "transfer" ? `${accountLabel(transactionAccount(item))} → ${accountLabel(item.transferTo || "savings")}` : item.category}</span><span>{item.enteredBy}</span><span>{shortDate.format(new Date(`${item.date}T12:00:00`))}</span><b className={tone}>{item.amount > 0 && kind !== "transfer" ? "+" : ""}{currency.format(item.amount)}</b>{onDelete ? <button aria-label={`Delete ${item.description}`} onClick={() => onDelete(item.id)}><Trash2 /></button> : <span className="ledger-spacer" />}</div>; }
+function LedgerRow({ item, onDelete, onEdit }: { item: Transaction; onDelete?: (id: string) => void; onEdit?: (item: Transaction) => void }) { const kind = transactionKind(item); const tone = kind === "transfer" ? "" : item.amount > 0 ? "amount-positive" : "amount-negative"; return <div className="ledger-row"><div className={`transaction-icon ${kind}`}>{kind === "transfer" ? <ArrowRightLeft /> : kind === "income" ? <ArrowDownLeft /> : <ArrowUpRight />}</div><strong>{item.description}{item.status === "pending" && <small className="pending-badge">Pending</small>}{item.notes && <small className="transaction-note">{item.notes}</small>}</strong><span>{kind === "transfer" ? `${accountLabel(transactionAccount(item))} → ${accountLabel(item.transferTo || "savings")}` : item.category}</span><span>{item.enteredBy}</span><span>{shortDate.format(new Date(`${item.date}T12:00:00`))}</span><b className={tone}>{item.amount > 0 && kind !== "transfer" ? "+" : ""}{currency.format(item.amount)}</b><div className="ledger-actions">{onEdit && <button aria-label={`Edit ${item.description}`} onClick={() => onEdit(item)}><Pencil /></button>}{onDelete && <button aria-label={`Delete ${item.description}`} onClick={() => onDelete(item.id)}><Trash2 /></button>}</div></div>; }
+
+function CashFlowChart({ transactions }: { transactions: Transaction[] }) {
+  const weeks = Array.from({ length: 5 }, (_, index) => {
+    const entries = transactions.filter((item) => Math.floor((Number(item.date.slice(8)) - 1) / 7) === index);
+    return { income: entries.filter((item) => transactionKind(item) === "income").reduce((sum, item) => sum + Math.abs(item.amount), 0), spending: Math.max(0, entries.filter((item) => transactionKind(item) === "expense").reduce((sum, item) => sum - item.amount, 0)) };
+  });
+  const maximum = Math.max(1, ...weeks.flatMap((week) => [week.income, week.spending]));
+  return <><div className="cash-chart" role="img" aria-label={weeks.map((week, index) => `Week ${index + 1}: income ${currency.format(week.income)}, spending ${currency.format(week.spending)}`).join(". ")}>{weeks.map((week, index) => <div className="cash-week" key={index}><div className="cash-bars"><i className="cash-income" style={{ height: `${week.income / maximum * 100}%` }} title={`Income: ${currency.format(week.income)}`} /><i className="cash-spending" style={{ height: `${week.spending / maximum * 100}%` }} title={`Spending: ${currency.format(week.spending)}`} /></div><small>Week {index + 1}</small><span>{currency.format(week.income - week.spending)}</span></div>)}</div><p className="chart-key"><i /> Income <i /> Spending · Weekly net below each group. Transfers excluded.</p></>;
+}
 function BillRow({ bill, onToggle }: { bill: Bill; onToggle: (id: string) => void }) { const days = daysUntil(bill.dueDate); return <div className="bill-row"><button className="bill-check" aria-label={`Mark ${bill.name} paid`} onClick={() => onToggle(bill.id)}><Check /></button><div><strong>{bill.name}</strong><span>{bill.category} · {days < 0 ? `${Math.abs(days)} days overdue` : `Due in ${days} days`}</span></div><b>{currency.format(bill.amount)}</b></div>; }
 function EmptyState({ icon, title, copy }: { icon: React.ReactNode; title: string; copy: string }) { return <div className="empty-state">{icon}<strong>{title}</strong><span>{copy}</span></div>; }
 function accountLabel(account: AccountName) { return account === "checking" ? "Checking" : "Savings"; }
@@ -588,12 +607,13 @@ function syncLabel(sync: SyncState) { return ({ local: "Local preview", connecti
 function csvEscape(value: string) { return `"${value.replaceAll('"', '""')}"`; }
 function parseJson(text: string, enteredBy: string): Transaction[] { const parsed = JSON.parse(text); const rows = Array.isArray(parsed) ? parsed : parsed.transactions; if (!Array.isArray(rows)) throw new Error("JSON must contain a transactions array."); return rows.map((row) => normalizeImport(row, enteredBy, "JSON import")).filter(Boolean) as Transaction[]; }
 function parseCsv(text: string, enteredBy: string, source = "CSV import"): Transaction[] {
-  const lines = text.split(/\r?\n/).filter((line) => line.trim());
+  const lines = csvRecords(text).filter((line) => line.trim());
   const headerIndex = lines.findIndex((line) => { const cells = splitCsv(line).map((value) => value.trim().toLowerCase().replace(/\.$/, "")); return cells.includes("date") && cells.includes("description") && cells.includes("amount"); });
   if (headerIndex < 0) return [];
   const headers = splitCsv(lines[headerIndex]).map((value) => value.trim().toLowerCase().replace(/\.$/, ""));
   return lines.slice(headerIndex + 1).map((line) => { const values = splitCsv(line); const row = Object.fromEntries(headers.map((header, index) => [header, values[index]])); return normalizeImport(row, enteredBy, source); }).filter(Boolean) as Transaction[];
 }
+function csvRecords(text: string) { const rows: string[] = []; let current = ""; let quoted = false; for (let i = 0; i < text.length; i++) { const char = text[i]; if (char === '"') { if (quoted && text[i + 1] === '"') { current += '""'; i++; continue; } quoted = !quoted; } if (char === "\n" && !quoted) { rows.push(current.replace(/\r$/, "")); current = ""; } else current += char; } if (current) rows.push(current); return rows; }
 function splitCsv(line: string) { const values: string[] = []; let current = ""; let quoted = false; for (let index = 0; index < line.length; index += 1) { const char = line[index]; if (char === '"' && line[index + 1] === '"') { current += '"'; index += 1; } else if (char === '"') quoted = !quoted; else if (char === "," && !quoted) { values.push(current.trim()); current = ""; } else current += char; } values.push(current.trim()); return values; }
 function normalizeImport(row: Record<string, unknown>, enteredBy: string, source: string): Transaction | null {
   const amount = Number(String(row.amount ?? "").replace(/[$,]/g, ""));
@@ -608,7 +628,7 @@ function normalizeImport(row: Record<string, unknown>, enteredBy: string, source
   const transferTo: AccountName | undefined = type === "transfer" ? /online banking transfer from sav/i.test(description) || suppliedTransfer === "checking" ? "checking" : "savings" : undefined;
   const normalizedAmount = type === "transfer" ? Math.abs(amount) : amount;
   const fingerprint = `${date}|${description.toLowerCase()}|${normalizedAmount.toFixed(2)}|${type}|${account}`;
-  return { id: `import-${simpleHash(fingerprint)}`, date, description: cleanBankDescription(description), category: String(row.category || categorize(description, type)), amount: normalizedAmount, type, account, transferTo, affectsBalance: false, status: String(row.status || "posted").toLowerCase() === "pending" ? "pending" : "posted", enteredBy: String(row.enteredBy || row.enteredby || enteredBy), createdAt: new Date().toISOString(), importSource: source };
+  return { id: String(row.id || `import-${simpleHash(fingerprint)}`), date, description: cleanBankDescription(description), category: String(row.category || categorize(description, type)), amount: normalizedAmount, type, account, transferTo, affectsBalance: false, status: String(row.status || "posted").toLowerCase() === "pending" ? "pending" : "posted", notes: String(row.notes || ""), enteredBy: String(row.enteredBy || row.enteredby || enteredBy), createdAt: String(row.createdAt || row.createdat || new Date().toISOString()), importSource: source };
 }
 function normalizeDate(value: string) { const cleaned = value.trim(); if (/^\d{4}-\d{2}-\d{2}$/.test(cleaned)) return cleaned; const match = cleaned.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); return match ? `${match[3]}-${match[1].padStart(2, "0")}-${match[2].padStart(2, "0")}` : ""; }
 function simpleHash(value: string) { let hash = 2166136261; for (let index = 0; index < value.length; index += 1) { hash ^= value.charCodeAt(index); hash = Math.imul(hash, 16777619); } return (hash >>> 0).toString(36); }

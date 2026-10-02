@@ -9,6 +9,8 @@ export type Transaction = {
   amount: number;
   enteredBy: string;
   createdAt: string;
+  updatedAt?: string;
+  notes?: string;
   type?: TransactionKind;
   account?: AccountName;
   transferTo?: AccountName;

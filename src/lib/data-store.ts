@@ -9,13 +9,32 @@ import {
   signOut,
   type User,
 } from "firebase/auth";
-import { doc, getDoc, getFirestore, onSnapshot, setDoc, updateDoc, type Unsubscribe } from "firebase/firestore";
+import { doc, getDocFromServer as getDoc, getFirestore, onSnapshot, runTransaction, setDoc, updateDoc, type Unsubscribe } from "firebase/firestore";
 import { createDemoData } from "../demo-data";
 import type { HouseholdData, SyncState } from "../types";
 
 const STORAGE_KEY = "living-current-household-v1";
 const PENDING_KEY = "living-current-pending-save";
 const cloudValues = (data: HouseholdData) => JSON.parse(JSON.stringify(data));
+// Apply only this device's changes to the latest cloud record, preserving other devices' entries.
+export function mergeHouseholdChanges(base: HouseholdData, next: HouseholdData, remote: HouseholdData): HouseholdData {
+  const result = { ...remote };
+  for (const key of Object.keys(next) as (keyof HouseholdData)[]) {
+    if (key === "transactions" || key === "bills") continue;
+    if (JSON.stringify(base[key]) !== JSON.stringify(next[key])) Object.assign(result, { [key]: next[key] });
+  }
+  const mergeRows = <T extends { id: string }>(before: T[], after: T[], cloud: T[]) => {
+    const beforeMap = new Map(before.map((item) => [item.id, item]));
+    const afterMap = new Map(after.map((item) => [item.id, item]));
+    const rows = new Map(cloud.map((item) => [item.id, item]));
+    for (const id of beforeMap.keys()) if (!afterMap.has(id)) rows.delete(id);
+    for (const [id, item] of afterMap) if (JSON.stringify(item) !== JSON.stringify(beforeMap.get(id))) rows.set(id, item);
+    return [...rows.values()];
+  };
+  result.transactions = mergeRows(base.transactions, next.transactions, remote.transactions);
+  result.bills = mergeRows(base.bills, next.bills, remote.bills);
+  return result;
+}
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -104,6 +123,9 @@ export async function createDataStore({ onData, onSync, onIdentity }: StoreOptio
   let unsubscribe: Unsubscribe | undefined;
   let cloudDocumentExists = false;
   let uid = "";
+  let latestData = initialData;
+  let saveQueue: Promise<void> = Promise.resolve();
+  let pendingCount = 0;
 
   if (!firebaseConfigured) {
     onSync("local");
@@ -123,6 +145,16 @@ export async function createDataStore({ onData, onSync, onIdentity }: StoreOptio
     uid = user.uid;
     onIdentity(uid);
     const reference = doc(getFirestore(app), "households", householdId);
+    const outboxKey = `${PENDING_KEY}-${uid}`;
+    const persistChanges = async (base: HouseholdData, next: HouseholdData) => {
+      await runTransaction(getFirestore(app), async (transaction) => {
+        const snapshot = await transaction.get(reference);
+        if (!snapshot.exists()) throw new Error("Household document missing");
+        const remote = migrateHouseholdData(snapshot.data() as Partial<HouseholdData>);
+        const merged = mergeHouseholdChanges(base, next, remote);
+        transaction.update(reference, cloudValues(merged));
+      });
+    };
     const firstSnapshot = await getDoc(reference);
     cloudDocumentExists = firstSnapshot.exists();
 
@@ -132,48 +164,77 @@ export async function createDataStore({ onData, onSync, onIdentity }: StoreOptio
     } else {
       const remoteRaw = firstSnapshot.data() as Partial<HouseholdData>;
       const remote = migrateHouseholdData(remoteRaw);
-      const pendingLocal = migrateHouseholdData(readLocal());
-      if (localStorage.getItem(PENDING_KEY) === "true" || pendingLocal.updatedAt > remote.updatedAt) {
-        await updateDoc(reference, cloudValues(pendingLocal));
-        localStorage.removeItem(PENDING_KEY);
-        Object.assign(remote, pendingLocal);
+      const savedOutbox = localStorage.getItem(outboxKey);
+      if (savedOutbox) {
+        const pending = JSON.parse(savedOutbox) as { base: HouseholdData; next: HouseholdData };
+        await persistChanges(pending.base, pending.next);
+        Object.assign(remote, mergeHouseholdChanges(pending.base, pending.next, remote));
+        localStorage.removeItem(outboxKey);
       }
+      if (localStorage.getItem(PENDING_KEY) === "true") {
+        const pending = migrateHouseholdData(readLocal());
+        const emptyBase = { ...pending, transactions: [], bills: [] };
+        await persistChanges(emptyBase, pending);
+        Object.assign(remote, mergeHouseholdChanges(emptyBase, pending, remote));
+        localStorage.removeItem(PENDING_KEY);
+      }
+      // A default/new device must never upload an empty household based on its timestamp.
       if (remoteRaw.schemaVersion !== 3) await updateDoc(reference, { ...remote });
       writeLocal(remote);
       onData(remote);
+      latestData = remote;
     }
 
     unsubscribe = onSnapshot(reference, (snapshot) => {
       if (!snapshot.exists()) return;
+      if (pendingCount || snapshot.metadata.hasPendingWrites || localStorage.getItem(outboxKey)) return;
       const remote = migrateHouseholdData(snapshot.data() as Partial<HouseholdData>);
+      latestData = remote;
       writeLocal(remote);
       onData(remote);
-      onSync("synced");
+      onSync(snapshot.metadata.fromCache ? "offline" : "synced");
     }, () => onSync("needs-setup"));
 
     return {
-      initialData: firstSnapshot.exists() ? migrateHouseholdData(firstSnapshot.data() as Partial<HouseholdData>) : initialData,
+      initialData: latestData,
       save: async (data) => {
+        const base = latestData;
+        latestData = data;
         writeLocal(data);
-        localStorage.setItem(PENDING_KEY, "true");
+        const oldOutbox = localStorage.getItem(outboxKey);
+        const originalBase = oldOutbox ? (JSON.parse(oldOutbox) as { base: HouseholdData }).base : base;
+        localStorage.setItem(outboxKey, JSON.stringify({ base: originalBase, next: data }));
         if (!cloudDocumentExists) return;
-        try {
-          await updateDoc(reference, cloudValues(data));
-          localStorage.removeItem(PENDING_KEY);
-          onSync("synced");
-        } catch {
-          onSync("needs-setup");
+        pendingCount++;
+        onSync("connecting");
+        saveQueue = saveQueue.then(async () => {
+          try {
+            await persistChanges(originalBase, data);
+            if (latestData.updatedAt === data.updatedAt) localStorage.removeItem(outboxKey);
+          } catch { onSync("offline"); }
+          finally { pendingCount--; }
+        });
+        await saveQueue;
+        if (!pendingCount && !localStorage.getItem(outboxKey)) {
+          try { const snapshot = await getDoc(reference);
+            latestData = migrateHouseholdData(snapshot.data() as Partial<HouseholdData>);
+            writeLocal(latestData); onData(latestData); onSync("synced");
+          } catch { onSync("offline"); }
         }
       },
       refresh: async () => {
         onSync("connecting");
         try {
+          await saveQueue;
+          const savedOutbox = localStorage.getItem(outboxKey);
+          if (savedOutbox) { const pending = JSON.parse(savedOutbox); await persistChanges(pending.base, pending.next); localStorage.removeItem(outboxKey); }
           const snapshot = await getDoc(reference);
           if (!snapshot.exists()) {
             onSync("needs-setup");
             return;
           }
           const remote = migrateHouseholdData(snapshot.data() as Partial<HouseholdData>);
+          latestData = remote;
           writeLocal(remote);
           onData(remote);
           onSync("synced");
@@ -187,7 +248,7 @@ export async function createDataStore({ onData, onSync, onIdentity }: StoreOptio
     onSync(uid ? "needs-setup" : "offline");
     return {
       initialData,
-      save: async (data) => writeLocal(data),
+      save: async (data) => { const base = latestData; latestData = data; writeLocal(data); if (uid) { const key = `${PENDING_KEY}-${uid}`; const old = localStorage.getItem(key); localStorage.setItem(key, JSON.stringify({ base: old ? JSON.parse(old).base : base, next: data })); } },
       refresh: async () => onData(readLocal()),
       destroy: () => unsubscribe?.(),
     };
