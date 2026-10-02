@@ -64,6 +64,26 @@ const readLocal = (): HouseholdData => {
 
 const writeLocal = (data: HouseholdData) => localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
 
+const migrateHouseholdData = (value: Partial<HouseholdData> | undefined): HouseholdData => {
+  const defaults = createDemoData();
+  const transactions = Array.isArray(value?.transactions)
+    ? value.transactions.filter((item) => !item.id?.startsWith("demo-"))
+    : [];
+  const bills = Array.isArray(value?.bills)
+    ? value.bills.filter((item) => !["bill-1", "bill-2", "bill-3"].includes(item.id))
+    : [];
+  return {
+    ...defaults,
+    ...value,
+    schemaVersion: 3,
+    balanceStartMonth: value?.balanceStartMonth || "2026-10",
+    checkingStartingBalance: Number.isFinite(value?.checkingStartingBalance) ? Number(value?.checkingStartingBalance) : 1555.44,
+    savingsStartingBalance: Number.isFinite(value?.savingsStartingBalance) ? Number(value?.savingsStartingBalance) : 3053.72,
+    transactions,
+    bills,
+  };
+};
+
 type StoreOptions = {
   onData: (data: HouseholdData) => void;
   onSync: (state: SyncState) => void;
@@ -78,7 +98,7 @@ export type DataStore = {
 };
 
 export async function createDataStore({ onData, onSync, onIdentity }: StoreOptions): Promise<DataStore> {
-  const initialData = readLocal();
+  const initialData = migrateHouseholdData(readLocal());
   let unsubscribe: Unsubscribe | undefined;
   let cloudDocumentExists = false;
   let uid = "";
@@ -108,21 +128,23 @@ export async function createDataStore({ onData, onSync, onIdentity }: StoreOptio
       await setDoc(reference, { ...initialData, memberUids: [uid] });
       cloudDocumentExists = true;
     } else {
-      const remote = firstSnapshot.data() as HouseholdData;
+      const remoteRaw = firstSnapshot.data() as Partial<HouseholdData>;
+      const remote = migrateHouseholdData(remoteRaw);
+      if (remoteRaw.schemaVersion !== 3) await updateDoc(reference, { ...remote });
       writeLocal(remote);
       onData(remote);
     }
 
     unsubscribe = onSnapshot(reference, (snapshot) => {
       if (!snapshot.exists()) return;
-      const remote = snapshot.data() as HouseholdData;
+      const remote = migrateHouseholdData(snapshot.data() as Partial<HouseholdData>);
       writeLocal(remote);
       onData(remote);
       onSync("synced");
     }, () => onSync("needs-setup"));
 
     return {
-      initialData: firstSnapshot.exists() ? firstSnapshot.data() as HouseholdData : initialData,
+      initialData: firstSnapshot.exists() ? migrateHouseholdData(firstSnapshot.data() as Partial<HouseholdData>) : initialData,
       save: async (data) => {
         writeLocal(data);
         if (!cloudDocumentExists) return;
@@ -141,7 +163,7 @@ export async function createDataStore({ onData, onSync, onIdentity }: StoreOptio
             onSync("needs-setup");
             return;
           }
-          const remote = snapshot.data() as HouseholdData;
+          const remote = migrateHouseholdData(snapshot.data() as Partial<HouseholdData>);
           writeLocal(remote);
           onData(remote);
           onSync("synced");

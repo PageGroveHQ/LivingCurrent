@@ -1,6 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="18" fill="#0a2725"/>
-  <circle cx="32" cy="32" r="21" fill="none" stroke="#c99055" stroke-width="2"/>
-  <path d="M16 28c8-8 24-8 32 0M18 38c9 7 20 7 28 0" fill="none" stroke="#e7c99d" stroke-width="3" stroke-linecap="round"/>
-  <circle cx="32" cy="32" r="4" fill="#c99055"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180">
+  <defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#123b35"/><stop offset="1" stop-color="#061b1a"/></linearGradient><radialGradient id="glow" cx=".32" cy=".24"><stop stop-color="#efd9b8"/><stop offset=".5" stop-color="#c88e54"/><stop offset="1" stop-color="#8d5a32"/></radialGradient></defs>
+  <rect width="180" height="180" rx="42" fill="url(#bg)"/>
+  <circle cx="90" cy="90" r="65" fill="none" stroke="#c99055" stroke-width="3"/>
+  <path d="M42 108c23 22 69 23 96-3M39 70c27-24 72-25 104 1" fill="none" stroke="#e7c99d" stroke-width="3" stroke-linecap="round" opacity=".7"/>
+  <circle cx="90" cy="90" r="39" fill="url(#glow)" opacity=".16"/>
+  <text x="90" y="105" fill="#f1ddbc" font-family="Georgia,serif" font-size="49" font-weight="500" text-anchor="middle" letter-spacing="-4">LC</text>
 </svg>

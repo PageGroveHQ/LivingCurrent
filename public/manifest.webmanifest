@@ -1,12 +1,14 @@
 {
   "name": "Living Current",
-  "short_name": "Current",
+  "short_name": "Living Current",
+  "id": "./",
   "description": "A private, shared view of your household finances.",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#0a2725",
   "theme_color": "#0a2725",
   "icons": [
-    { "src": "./favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+    { "src": "./favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" },
+    { "src": "./apple-touch-icon.png", "sizes": "180x180", "type": "image/png", "purpose": "any" }
   ]
 }

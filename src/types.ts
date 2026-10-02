@@ -1,3 +1,6 @@
+export type AccountName = "checking" | "savings";
+export type TransactionKind = "expense" | "income" | "transfer";
+
 export type Transaction = {
   id: string;
   date: string;
@@ -6,6 +9,12 @@ export type Transaction = {
   amount: number;
   enteredBy: string;
   createdAt: string;
+  type?: TransactionKind;
+  account?: AccountName;
+  transferTo?: AccountName;
+  affectsBalance?: boolean;
+  importSource?: string;
+  status?: "pending" | "posted";
 };
 
 export type Bill = {
@@ -19,7 +28,13 @@ export type Bill = {
 };
 
 export type HouseholdData = {
-  startingBalance: number;
+  schemaVersion?: number;
+  balanceStartMonth: string;
+  checkingStartingBalance: number;
+  savingsStartingBalance: number;
+  checkingBalance?: number;
+  savingsBalance?: number;
+  startingBalance?: number;
   safetyBuffer: number;
   displayName: string;
   partnerName: string;
