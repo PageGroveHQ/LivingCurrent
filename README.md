@@ -9,7 +9,9 @@ A mobile-first household finance tracker for recording income, expenses, upcomin
 - Expense, income, and checking/savings transfer entry
 - Current-month activity plus a monthly archive
 - Pending transaction tracking and bank-import reconciliation
-- Searchable household activity with per-device household identity
+- Searchable/filterable activity and archives, with 10-entry progressive pagination
+- Editable/deletable bills with linked payment transactions and configurable reminders
+- Per-device household identity
 - Bank-statement, CSV, and JSON import/export
 - Local preview mode when Firebase is not configured
 - Firebase email/password Authentication and Cloud Firestore synchronization
@@ -41,6 +43,12 @@ The app works immediately with an empty local household. Copy `.env.example` to 
 The Settings page stores an opening checking and savings balance for the first tracked month. Living Current derives the current account balances from those opening values and all later expenses, income, refunds, and transfers. Archived months before the opening month remain available for review without changing the current balance.
 
 Bill Planning is the total of unpaid bills due within 31 days. It does not move money between accounts. Available Balance is Current Balance minus Bill Planning and the safety buffer.
+
+Use **Record payment** on a bill to create one expense transaction, or link an expense you already entered. You can also select a bill while adding an expense. The transaction changes the chosen account balance; the paid bill leaves planning. Linking an existing transaction never creates a second expense. Deleting or unlinking its payment reopens the bill. Deleting a bill preserves its payment transaction. For the next billing cycle, edit the bill's due date; the prior payment remains in history.
+
+Reminders appear inside the app. Optional browser notifications run while the app is open, subject to browser support and permission; there is no closed-app background push service.
+
+Run `npm test` to verify cloud merge, transaction ordering, and bill-payment balance invariants.
 
 ## GitHub Pages
 

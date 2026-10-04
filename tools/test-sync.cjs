@@ -5,6 +5,8 @@ const { stripTypeScriptTypes } = require('node:module');
 const source = fs.readFileSync('src/lib/data-store.ts', 'utf8');
 const helper = source.slice(source.indexOf('export function mergeHouseholdChanges'), source.indexOf('const firebaseConfig'));
 const context = { exports: {} };
+const billing = fs.readFileSync('src/lib/billing.ts', 'utf8').replace(/^import.*$/m, '').replaceAll('export function', 'function');
+vm.runInNewContext(stripTypeScriptTypes(billing), context);
 vm.runInNewContext(stripTypeScriptTypes(helper.replace('export function', 'function')) + '\nexports.mergeHouseholdChanges = mergeHouseholdChanges;', context);
 const merge = context.exports.mergeHouseholdChanges;
 const row = (id, amount = -10) => ({ id, amount, date: '2026-10-01', description: id, createdAt: '2026-10-02T10:00:00Z' });

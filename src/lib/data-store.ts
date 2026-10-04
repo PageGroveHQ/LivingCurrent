@@ -11,6 +11,7 @@ import {
 } from "firebase/auth";
 import { doc, getDocFromServer as getDoc, getFirestore, onSnapshot, runTransaction, setDoc, updateDoc, type Unsubscribe } from "firebase/firestore";
 import { createDemoData } from "../demo-data";
+import { reconcileBillPayments } from "./billing";
 import type { HouseholdData, SyncState } from "../types";
 
 const STORAGE_KEY = "living-current-household-v1";
@@ -33,7 +34,7 @@ export function mergeHouseholdChanges(base: HouseholdData, next: HouseholdData, 
   };
   result.transactions = mergeRows(base.transactions, next.transactions, remote.transactions);
   result.bills = mergeRows(base.bills, next.bills, remote.bills);
-  return result;
+  return reconcileBillPayments(result);
 }
 
 const firebaseConfig = {

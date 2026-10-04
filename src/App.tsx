@@ -33,6 +33,7 @@ import {
   X,
 } from "lucide-react";
 import { createDemoData } from "./demo-data";
+import { recordBillPayment, reconcileBillPayments } from "./lib/billing";
 import {
   createDataStore,
   createHouseholdAccount,
@@ -99,7 +100,7 @@ function mergeImportedTransactions(current: Transaction[], incoming: Transaction
     const importedDate = new Date(`${item.date}T12:00:00`).getTime();
     const merchant = item.description.toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).find((word) => word.length > 3) || item.description.toLowerCase();
     const pendingIndex = merged.findIndex((existing) => existing.status === "pending" && Math.abs(existing.amount - item.amount) < .005 && Math.abs(new Date(`${existing.date}T12:00:00`).getTime() - importedDate) <= 4 * 86_400_000 && existing.description.toLowerCase().includes(merchant));
-    if (pendingIndex >= 0) merged[pendingIndex] = { ...item, id: merged[pendingIndex].id, enteredBy: merged[pendingIndex].enteredBy, createdAt: merged[pendingIndex].createdAt, notes: merged[pendingIndex].notes || item.notes, affectsBalance: merged[pendingIndex].affectsBalance, status: item.status === "pending" ? "pending" : "posted" };
+    if (pendingIndex >= 0) merged[pendingIndex] = { ...item, id: merged[pendingIndex].id, enteredBy: merged[pendingIndex].enteredBy, createdAt: merged[pendingIndex].createdAt, notes: merged[pendingIndex].notes || item.notes, billId: merged[pendingIndex].billId || item.billId, affectsBalance: merged[pendingIndex].affectsBalance, status: item.status === "pending" ? "pending" : "posted" };
     else merged.push(item);
   }
   return merged.sort((a, b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt));
@@ -118,6 +119,9 @@ function App() {
   const [transactionOpen, setTransactionOpen] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [billOpen, setBillOpen] = useState(false);
+  const [editingBill, setEditingBill] = useState<Bill | null>(null);
+  const [payingBill, setPayingBill] = useState<Bill | null>(null);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [toast, setToast] = useState("");
   const [deviceRole, setDeviceRole] = useState<DeviceRole>(() => localStorage.getItem("living-current-device-role") === "partner" ? "partner" : "primary");
@@ -160,9 +164,18 @@ function App() {
     const timer = window.setTimeout(() => setToast(""), 2800);
     return () => window.clearTimeout(timer);
   }, [toast]);
+  useEffect(() => {
+    if (!storeReady || !("Notification" in window) || Notification.permission !== "granted") return;
+    for (const bill of data.bills) {
+      if (bill.paid || (bill.reminderDays ?? 3) < 0 || daysUntil(bill.dueDate) > (bill.reminderDays ?? 3)) continue;
+      const key = `living-current-reminder-${bill.id}-${bill.dueDate}-${todayISO()}`;
+      if (localStorage.getItem(key)) continue;
+      try { new Notification(`${bill.name} is ${daysUntil(bill.dueDate) < 0 ? "overdue" : "coming due"}`, { body: `${currency.format(bill.amount)} · Due ${bill.dueDate}`, tag: bill.id }); localStorage.setItem(key, "shown"); } catch { /* In-app reminders remain available if native alerts are unsupported. */ }
+    }
+  }, [data.bills, storeReady]);
 
   const updateData = (updater: (current: HouseholdData) => HouseholdData, message?: string) => {
-    const next = { ...updater(dataRef.current), updatedAt: new Date().toISOString() };
+    const next = { ...reconcileBillPayments(updater(dataRef.current)), updatedAt: new Date().toISOString() };
     dataRef.current = next;
     setData(next);
     void store.current?.save(next);
@@ -181,14 +194,15 @@ function App() {
   }, [data]);
 
   const addTransaction = (transaction: Transaction) => {
-    updateData((current) => ({ ...current, transactions: sortTransactions([...current.transactions.filter((item) => item.id !== transaction.id), transaction]) }), editingTransaction ? "Transaction updated" : "Transaction added");
+    updateData((current) => { const bill = transaction.billId ? current.bills.find((item) => item.id === transaction.billId) : undefined; if (bill?.paid && bill.paymentTransactionId !== transaction.id) return current; const next = { ...current, transactions: sortTransactions([...current.transactions.filter((item) => item.id !== transaction.id), transaction]) }; return bill ? { ...next, bills: next.bills.map((item) => item.id === bill.id ? { ...item, paid: true, paymentTransactionId: transaction.id } : item) } : next; }, editingTransaction ? "Transaction updated" : "Transaction added");
     setTransactionOpen(false);
     setEditingTransaction(null);
   };
 
   const addBill = (bill: Bill) => {
-    updateData((current) => ({ ...current, bills: [...current.bills, bill].sort((a, b) => a.dueDate.localeCompare(b.dueDate)) }), "Bill added");
+    updateData((current) => ({ ...current, bills: [...current.bills.filter((item) => item.id !== bill.id), bill].sort((a, b) => a.dueDate.localeCompare(b.dueDate)) }), editingBill ? "Bill updated" : "Bill added");
     setBillOpen(false);
+    setEditingBill(null);
   };
 
   const navigate = (next: View) => {
@@ -241,15 +255,15 @@ function App() {
             <h1>{viewTitle(view)}</h1>
           </div>
           <div className="topbar-actions">
-            <button className="icon-button" aria-label="Notifications"><Bell /></button>
+            <button className="icon-button" aria-label="Notifications" onClick={() => setNotificationsOpen(true)}><Bell /></button>
             <button className="primary-button" onClick={() => setTransactionOpen(true)}><Plus /> <span>Add transaction</span></button>
           </div>
         </header>
 
-        {view === "overview" && <Overview data={data} totals={totals} onNavigate={navigate} onAdd={() => setTransactionOpen(true)} onToggleBill={(id) => updateData((current) => ({ ...current, bills: current.bills.map((bill) => bill.id === id ? { ...bill, paid: !bill.paid } : bill) }), "Bill updated")} />}
+        {view === "overview" && <Overview data={data} totals={totals} onNavigate={navigate} onAdd={() => setTransactionOpen(true)} onToggleBill={(id) => setPayingBill(data.bills.find((bill) => bill.id === id) || null)} />}
         {view === "activity" && <Activity data={data} onEdit={setEditingTransaction} onDelete={(id) => updateData((current) => ({ ...current, transactions: current.transactions.filter((item) => item.id !== id) }), "Transaction removed")} />}
         {view === "archive" && <ArchiveView data={data} onEdit={setEditingTransaction} />}
-        {view === "bills" && <Bills data={data} onAdd={() => setBillOpen(true)} onToggle={(id) => updateData((current) => ({ ...current, bills: current.bills.map((bill) => bill.id === id ? { ...bill, paid: !bill.paid } : bill) }), "Bill updated")} />}
+        {view === "bills" && <Bills data={data} onAdd={() => setBillOpen(true)} onEdit={setEditingBill} onPay={setPayingBill} onDelete={(id) => updateData((current) => ({ ...current, bills: current.bills.filter((bill) => bill.id !== id) }), "Bill removed; payment history kept")} />}
         {view === "import" && <ImportExport data={data} enteredBy={deviceRole === "primary" ? data.displayName : data.partnerName} onImport={(transactions) => updateData((current) => ({ ...current, transactions: mergeImportedTransactions(current.transactions, transactions) }), `${transactions.length} transactions reviewed for import`)} />}
         {view === "sync" && <SyncView data={data} sync={sync} email={authUser?.email || ""} lastSyncAt={lastSyncAt} onRefresh={refreshCloud} />}
         {view === "settings" && <SettingsView data={data} sync={sync} email={authUser?.email || ""} uid={deviceUid} deviceRole={deviceRole} onBeforeUpdate={async () => { await store.current?.flush(); }} onDeviceRoleChange={(role) => { localStorage.setItem("living-current-device-role", role); setDeviceRole(role); setToast("This device identity was updated"); }} onSignOut={() => void signOutOfHousehold()} onSave={(values) => updateData((current) => ({ ...current, ...values }), "Settings saved")} />}
@@ -263,8 +277,10 @@ function App() {
         <NavButton active={view === "settings"} icon={<Settings />} label="Settings" onClick={() => navigate("settings")} />
       </nav>
 
-      {(transactionOpen || editingTransaction) && <TransactionDialog key={editingTransaction?.id || "new"} existing={editingTransaction || undefined} name={deviceRole === "primary" ? data.displayName : data.partnerName} onClose={() => { setTransactionOpen(false); setEditingTransaction(null); }} onSave={addTransaction} />}
-      {billOpen && <BillDialog onClose={() => setBillOpen(false)} onSave={addBill} />}
+      {(transactionOpen || editingTransaction) && <TransactionDialog key={editingTransaction?.id || "new"} existing={editingTransaction || undefined} bills={data.bills} name={deviceRole === "primary" ? data.displayName : data.partnerName} onClose={() => { setTransactionOpen(false); setEditingTransaction(null); }} onSave={addTransaction} />}
+      {(billOpen || editingBill) && <BillDialog key={editingBill?.id || "new"} existing={editingBill || undefined} name={deviceRole === "primary" ? data.displayName : data.partnerName} onClose={() => { setBillOpen(false); setEditingBill(null); }} onSave={addBill} />}
+      {payingBill && <BillPaymentDialog bill={payingBill} data={data} name={deviceRole === "primary" ? data.displayName : data.partnerName} onClose={() => setPayingBill(null)} onSave={(payment) => { updateData((current) => recordBillPayment(current, payingBill.id, payment), "Bill paid with one linked transaction"); setPayingBill(null); }} />}
+      {notificationsOpen && <Modal title="Bill reminders" onClose={() => setNotificationsOpen(false)}><div className="entry-form"><p>Reminders appear here while you use the app. Enable browser alerts for notifications while Living Current is open.</p><button className="primary-button" onClick={() => { if ("Notification" in window) void Notification.requestPermission(); }}>Enable browser alerts</button>{data.bills.filter((bill) => !bill.paid && (bill.reminderDays ?? 3) >= 0 && daysUntil(bill.dueDate) <= (bill.reminderDays ?? 3)).map((bill) => <BillRow key={bill.id} bill={bill} onToggle={() => { setNotificationsOpen(false); setPayingBill(bill); }} />)}{!data.bills.some((bill) => !bill.paid && (bill.reminderDays ?? 3) >= 0 && daysUntil(bill.dueDate) <= (bill.reminderDays ?? 3)) && <p>No bills need attention yet.</p>}</div></Modal>}
       {toast && <div className="toast" role="status"><Check /> {toast}</div>}
     </div>
   );
@@ -392,19 +408,21 @@ function Overview({ data, totals, onNavigate, onAdd, onToggleBill }: { data: Hou
 }
 
 function Activity({ data, onDelete, onEdit }: { data: HouseholdData; onDelete: (id: string) => void; onEdit: (item: Transaction) => void }) {
-  const [query, setQuery] = useState("");
-  const current = sortTransactions(data.transactions.filter((item) => monthKey(item.date) === monthKey()));
-  const visible = current.filter((item) => `${item.description} ${item.category}`.toLowerCase().includes(query.toLowerCase()));
-  return (
-    <div className="page-content">
-      <section className="section-intro"><div><span>{monthLabel(monthKey()).toUpperCase()}</span><h2>This month’s activity.</h2><p>{current.length} entries shared across your household. Earlier months are in Monthly archive.</p></div><label className="search-field"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search activity" /></label></section>
-      <section className="panel ledger-panel">
-        <div className="ledger-head"><span>Description</span><span>Category</span><span>Entered by</span><span>Date</span><span>Amount</span><span /></div>
-        {visible.map((item) => <LedgerRow key={item.id} item={item} onEdit={onEdit} onDelete={onDelete} />)}
-        {!visible.length && <EmptyState icon={<Search />} title="No entries found" copy="Try a different search." />}
-      </section>
-    </div>
-  );
+  const current = data.transactions.filter((item) => monthKey(item.date) === monthKey());
+  return <div className="page-content"><section className="section-intro"><div><span>{monthLabel(monthKey()).toUpperCase()}</span><h2>This month’s activity.</h2><p>{current.length} entries. All remain accessible; earlier months are in Monthly archive.</p></div></section><TransactionBrowser transactions={current} onEdit={onEdit} onDelete={onDelete} /></div>;
+}
+
+type ListSort = "date" | "category" | "person" | "credit" | "debit";
+function ListControls({ query, setQuery, category, setCategory, person, setPerson, direction, setDirection, sort, setSort, categoryOptions, personOptions }: { query: string; setQuery: (value: string) => void; category: string; setCategory: (value: string) => void; person: string; setPerson: (value: string) => void; direction: string; setDirection: (value: string) => void; sort: ListSort; setSort: (value: ListSort) => void; categoryOptions: string[]; personOptions: string[] }) {
+  return <div className="list-controls"><label className="search-field"><Search /><input aria-label="Search records" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search descriptions, people, categories…" /></label><label>Category<select value={category} onChange={(event) => setCategory(event.target.value)}><option value="">All categories</option>{categoryOptions.map((item) => <option key={item}>{item}</option>)}</select></label><label>Entered by<select value={person} onChange={(event) => setPerson(event.target.value)}><option value="">Everyone</option>{personOptions.map((item) => <option key={item}>{item}</option>)}</select></label><label>Balance effect<select value={direction} onChange={(event) => setDirection(event.target.value)}><option value="">All movements</option><option value="credit">Credit / increase</option><option value="debit">Debit / decrease</option><option value="transfer">Transfers</option></select></label><label>Sort by<select value={sort} onChange={(event) => setSort(event.target.value as ListSort)}><option value="date">Date, then submission time</option><option value="category">Category A–Z</option><option value="person">Entered by A–Z</option><option value="credit">Credits first</option><option value="debit">Debits first</option></select></label></div>;
+}
+
+function TransactionBrowser({ transactions, onEdit, onDelete }: { transactions: Transaction[]; onEdit: (item: Transaction) => void; onDelete?: (id: string) => void }) {
+  const [query, setQuery] = useState(""); const [category, setCategory] = useState(""); const [person, setPerson] = useState(""); const [direction, setDirection] = useState(""); const [sort, setSort] = useState<ListSort>("date"); const [limit, setLimit] = useState(10);
+  useEffect(() => setLimit(10), [query, category, person, direction, sort]);
+  const filtered = sortTransactions(transactions).filter((item) => [item.description, item.category, item.enteredBy, item.notes || "", item.date].join(" ").toLowerCase().includes(query.toLowerCase()) && (!category || item.category === category) && (!person || item.enteredBy === person) && (!direction || (direction === "transfer" ? transactionKind(item) === "transfer" : transactionKind(item) === "transfer" || (direction === "credit" ? item.amount > 0 : item.amount < 0))));
+  filtered.sort((a, b) => (sort === "category" ? a.category.localeCompare(b.category) : sort === "person" ? a.enteredBy.localeCompare(b.enteredBy) : sort === "credit" ? b.amount - a.amount : sort === "debit" ? a.amount - b.amount : 0) || b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt));
+  return <><ListControls query={query} setQuery={setQuery} category={category} setCategory={setCategory} person={person} setPerson={setPerson} direction={direction} setDirection={setDirection} sort={sort} setSort={setSort} categoryOptions={[...new Set(transactions.map((item) => item.category))].sort()} personOptions={[...new Set(transactions.map((item) => item.enteredBy))].sort()} /><section className="panel ledger-panel"><div className="ledger-head"><span>Description</span><span>Category</span><span>Entered by</span><span>Date</span><span>Amount</span><span /></div>{filtered.slice(0, limit).map((item) => <LedgerRow key={item.id} item={item} onEdit={onEdit} onDelete={onDelete} />)}{!filtered.length && <EmptyState icon={<Search />} title="No matching entries" copy="Try another search or filter." />}<div className="list-pagination"><span>Showing {Math.min(limit, filtered.length)} of {filtered.length} matching entries</span>{limit < filtered.length && <button className="primary-button" onClick={() => setLimit((value) => value + 10)}>Show 10 more</button>}</div><p className="list-note">Transfers appear in both credit and debit filters because they increase one account and decrease the other.</p></section></>;
 }
 
 function ArchiveView({ data, onEdit }: { data: HouseholdData; onEdit: (item: Transaction) => void }) {
@@ -426,20 +444,18 @@ function ArchiveView({ data, onEdit }: { data: HouseholdData; onEdit: (item: Tra
           <div><span>TRANSFERS</span><strong>{currency.format(transfers)}</strong></div>
           <div><span>NET ACTIVITY</span><strong className={income - spending >= 0 ? "amount-positive" : "amount-negative"}>{currency.format(income - spending)}</strong></div>
         </section>
-        <section className="panel ledger-panel archive-ledger"><div className="ledger-head"><span>Description</span><span>Category</span><span>Entered by</span><span>Date</span><span>Amount</span><span /></div>{transactions.map((item) => <LedgerRow key={item.id} item={item} onEdit={onEdit} />)}</section>
+        <TransactionBrowser key={selectedMonth} transactions={transactions} onEdit={onEdit} />
       </>}
     </div>
   );
 }
 
-function Bills({ data, onAdd, onToggle }: { data: HouseholdData; onAdd: () => void; onToggle: (id: string) => void }) {
+function Bills({ data, onAdd, onPay, onEdit, onDelete }: { data: HouseholdData; onAdd: () => void; onPay: (bill: Bill) => void; onEdit: (bill: Bill) => void; onDelete: (id: string) => void }) {
+  const [query, setQuery] = useState(""); const [category, setCategory] = useState(""); const [person, setPerson] = useState(""); const [direction, setDirection] = useState(""); const [sort, setSort] = useState<ListSort>("date"); const [status, setStatus] = useState(""); const [deleting, setDeleting] = useState<Bill | null>(null);
   const unpaid = data.bills.filter(plannedBill).reduce((sum, bill) => sum + bill.amount, 0);
-  return (
-    <div className="page-content">
-      <section className="section-intro"><div><span>BILL PLANNING</span><h2>Know what the current carries next.</h2><p>{currency.format(unpaid)} planned across {data.bills.filter(plannedBill).length} unpaid bills due within 31 days. This amount reduces Available Balance without moving money from either account.</p></div><button className="primary-button" onClick={onAdd}><Plus /> Add bill</button></section>
-      <div className="bill-card-grid">{data.bills.map((bill) => <article className={`bill-card ${bill.paid ? "is-paid" : ""}`} key={bill.id}><div className="bill-card-top"><div className="bill-emblem"><ReceiptText /></div><span>{bill.recurrence}</span></div><small>{bill.category}</small><h3>{bill.name}</h3><strong>{currency.format(bill.amount)}</strong><div className="bill-card-foot"><div><span>{bill.paid ? "Paid" : daysUntil(bill.dueDate) < 0 ? "Overdue" : `Due in ${daysUntil(bill.dueDate)} days`}</span><small>{shortDate.format(new Date(`${bill.dueDate}T12:00:00`))}</small></div><button onClick={() => onToggle(bill.id)}>{bill.paid ? "Mark unpaid" : "Mark paid"}</button></div></article>)}</div>
-    </div>
-  );
+  const visible = data.bills.filter((bill) => [bill.name, bill.category, bill.enteredBy || "Household"].join(" ").toLowerCase().includes(query.toLowerCase()) && (!category || bill.category === category) && (!person || (bill.enteredBy || "Household") === person) && (!status || (status === "paid" ? bill.paid : !bill.paid)) && (!direction || direction === "debit"));
+  visible.sort((a, b) => (sort === "category" ? a.category.localeCompare(b.category) : sort === "person" ? (a.enteredBy || "Household").localeCompare(b.enteredBy || "Household") : sort === "credit" ? a.amount - b.amount : sort === "debit" ? b.amount - a.amount : 0) || a.dueDate.localeCompare(b.dueDate));
+  return <div className="page-content"><section className="section-intro"><div><span>BILL PLANNING</span><h2>Know what the current carries next.</h2><p>{currency.format(unpaid)} reserved for unpaid bills due within 31 days. Planning reduces available funds; recording payment reduces the chosen account once.</p></div><button className="primary-button" onClick={onAdd}><Plus /> Add bill</button></section><ListControls query={query} setQuery={setQuery} category={category} setCategory={setCategory} person={person} setPerson={setPerson} direction={direction} setDirection={setDirection} sort={sort} setSort={setSort} categoryOptions={[...new Set(data.bills.map((item) => item.category))].sort()} personOptions={[...new Set(data.bills.map((item) => item.enteredBy || "Household"))].sort()} /><label className="bill-status-filter">Payment status<select value={status} onChange={(event) => setStatus(event.target.value)}><option value="">All bills</option><option value="unpaid">Unpaid</option><option value="paid">Paid</option></select></label><p className="list-note">Bills are planned debits. Credit and transfer filters apply to Transactions.</p><div className="bill-card-grid">{visible.map((bill) => <article className={`bill-card ${bill.paid ? "is-paid" : ""}`} key={bill.id}><div className="bill-card-top"><div className="bill-emblem"><ReceiptText /></div><span>{bill.recurrence}</span><div className="ledger-actions"><button aria-label={`Edit ${bill.name}`} onClick={() => onEdit(bill)}><Pencil /></button><button aria-label={`Delete ${bill.name}`} onClick={() => setDeleting(bill)}><Trash2 /></button></div></div><small>{bill.category} · {bill.enteredBy || "Household"}</small><h3>{bill.name}</h3><strong>{currency.format(bill.amount)}</strong><p className="list-note">{(bill.reminderDays ?? 3) < 0 ? "Reminders off" : `Reminder: ${bill.reminderDays ?? 3} days before due`}</p><div className="bill-card-foot"><div><span>{bill.paid ? "Paid" : daysUntil(bill.dueDate) < 0 ? "Overdue" : `Due in ${daysUntil(bill.dueDate)} days`}</span><small>{shortDate.format(new Date(`${bill.dueDate}T12:00:00`))}</small></div>{!bill.paid && <button onClick={() => onPay(bill)}>Record payment</button>}{bill.paid && !bill.paymentTransactionId && <button onClick={() => onPay(bill)}>Link payment</button>}{bill.paid && <span>{bill.paymentTransactionId ? "Linked transaction" : "Previously marked paid"}</span>}</div></article>)}</div>{!visible.length && <EmptyState icon={<Search />} title="No matching bills" copy="Add a bill or change your filters." />}{deleting && <Modal title="Delete bill?" onClose={() => setDeleting(null)}><div className="entry-form"><p>Remove {deleting.name} from bill planning and reminders? Any payment transaction will remain in your account history.</p><button className="primary-button" onClick={() => { onDelete(deleting.id); setDeleting(null); }}>Delete bill</button></div></Modal>}</div>;
 }
 
 function ImportExport({ data, enteredBy, onImport }: { data: HouseholdData; enteredBy: string; onImport: (transactions: Transaction[]) => void }) {
@@ -550,7 +566,7 @@ function SyncView({ data, sync, email, lastSyncAt, onRefresh }: { data: Househol
   );
 }
 
-function TransactionDialog({ name, existing, onClose, onSave }: { name: string; existing?: Transaction; onClose: () => void; onSave: (transaction: Transaction) => void }) {
+function TransactionDialog({ name, existing, bills, onClose, onSave }: { name: string; existing?: Transaction; bills: Bill[]; onClose: () => void; onSave: (transaction: Transaction) => void }) {
   const [kind, setKind] = useState<TransactionKind>(existing ? transactionKind(existing) : "expense");
   const [description, setDescription] = useState(existing?.description || "");
   const [category, setCategory] = useState(existing && !categories.includes(existing.category) ? "Custom" : existing?.category || "Groceries");
@@ -561,16 +577,18 @@ function TransactionDialog({ name, existing, onClose, onSave }: { name: string; 
   const [transferTo, setTransferTo] = useState<AccountName>(existing?.transferTo || "savings");
   const [notes, setNotes] = useState(existing?.notes || "");
   const [status, setStatus] = useState<"pending" | "posted">(existing?.status || "pending");
+  const [billId, setBillId] = useState(existing?.billId || "");
   const chooseAccount = (next: AccountName) => { setAccount(next); if (transferTo === next) setTransferTo(next === "checking" ? "savings" : "checking"); };
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const value = Math.abs(Number(amount));
     const finalCategory = kind === "transfer" ? "Transfer" : category === "Custom" ? customCategory.trim() : category;
     if (!description.trim() || !value || !finalCategory || (kind === "transfer" && account === transferTo)) return;
-    onSave({ ...existing, id: existing?.id || makeId(), date, description: description.trim(), category: finalCategory, amount: kind === "expense" ? -value : value, type: kind, account, transferTo: kind === "transfer" ? transferTo : undefined, affectsBalance: true, status, notes: notes.trim(), enteredBy: existing?.enteredBy || name || "Household", createdAt: existing?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString() });
+    onSave({ ...existing, id: existing?.id || (billId ? `bill-payment-${billId}-${bills.find((bill) => bill.id === billId)?.dueDate}` : makeId()), billId: kind === "expense" ? billId || undefined : undefined, date, description: description.trim(), category: finalCategory, amount: kind === "expense" ? -value : value, type: kind, account, transferTo: kind === "transfer" ? transferTo : undefined, affectsBalance: true, status, notes: notes.trim(), enteredBy: existing?.enteredBy || name || "Household", createdAt: existing?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString() });
   };
   return <Modal title={existing ? "Edit transaction" : "Record a movement"} onClose={onClose}><form className="entry-form" onSubmit={submit}>
     <div className="type-toggle type-toggle-three"><button type="button" className={kind === "expense" ? "active" : ""} onClick={() => setKind("expense")}><ArrowUpRight /> Expense</button><button type="button" className={kind === "income" ? "active" : ""} onClick={() => setKind("income")}><ArrowDownLeft /> Income</button><button type="button" className={kind === "transfer" ? "active" : ""} onClick={() => setKind("transfer")}><ArrowRightLeft /> Transfer</button></div>
+    {kind === "expense" && <label>Bill payment (optional)<select value={billId} onChange={(event) => setBillId(event.target.value)}><option value="">Not linked to a bill</option>{bills.filter((bill) => !bill.paid || bill.paymentTransactionId === existing?.id).map((bill) => <option key={bill.id} value={bill.id}>{bill.name} · Due {bill.dueDate}</option>)}</select></label>}
     <label>Description<input autoFocus value={description} onChange={(event) => setDescription(event.target.value)} placeholder={kind === "transfer" ? "Move rent funds" : "Publix"} required /></label>
     {kind === "transfer" ? <div className="form-row"><label>From<select value={account} onChange={(event) => chooseAccount(event.target.value as AccountName)}><option value="checking">Checking</option><option value="savings">Savings</option></select></label><label>To<select value={transferTo} onChange={(event) => setTransferTo(event.target.value as AccountName)}><option value="checking" disabled={account === "checking"}>Checking</option><option value="savings" disabled={account === "savings"}>Savings</option></select></label></div> : <div className="form-row"><label>Category<select value={category} onChange={(event) => setCategory(event.target.value)}>{categories.map((item) => <option key={item}>{item}</option>)}</select></label><label>Account<select value={account} onChange={(event) => setAccount(event.target.value as AccountName)}><option value="checking">Checking</option><option value="savings">Savings</option></select></label></div>}
     {category === "Custom" && kind !== "transfer" && <label>Custom category name<input value={customCategory} onChange={(event) => setCustomCategory(event.target.value)} placeholder="Pet care" required /></label>}
@@ -582,10 +600,17 @@ function TransactionDialog({ name, existing, onClose, onSave }: { name: string; 
   </form></Modal>;
 }
 
-function BillDialog({ onClose, onSave }: { onClose: () => void; onSave: (bill: Bill) => void }) {
-  const [name, setName] = useState(""); const [category, setCategory] = useState("Utilities"); const [customCategory, setCustomCategory] = useState(""); const [amount, setAmount] = useState(""); const [date, setDate] = useState(todayISO()); const [recurrence, setRecurrence] = useState<Bill["recurrence"]>("monthly");
-  const submit = (event: FormEvent) => { event.preventDefault(); const finalCategory = category === "Custom" ? customCategory.trim() : category; if (!name.trim() || !Number(amount) || !finalCategory) return; onSave({ id: makeId(), name: name.trim(), category: finalCategory, amount: Math.abs(Number(amount)), dueDate: date, recurrence, paid: false }); };
-  return <Modal title="Add an upcoming bill" onClose={onClose}><form className="entry-form" onSubmit={submit}><label>Bill name<input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="Electric" required /></label><div className="form-row"><label>Category<select value={category} onChange={(event) => setCategory(event.target.value)}>{categories.filter((item) => !item.toLowerCase().includes("income") && item !== "Salary").map((item) => <option key={item}>{item}</option>)}</select></label><label>Amount<input inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="0.00" required /></label></div>{category === "Custom" && <label>Custom category name<input value={customCategory} onChange={(event) => setCustomCategory(event.target.value)} placeholder="Pet care" required /></label>}<div className="form-row"><label>Due date<input type="date" value={date} onChange={(event) => setDate(event.target.value)} required /></label><label>Repeats<select value={recurrence} onChange={(event) => setRecurrence(event.target.value as Bill["recurrence"])}><option value="monthly">Monthly</option><option value="weekly">Weekly</option><option value="yearly">Yearly</option><option value="once">One time</option></select></label></div><button className="primary-button submit-button" type="submit">Reserve this bill</button></form></Modal>;
+function BillDialog({ existing, name: enteredBy, onClose, onSave }: { existing?: Bill; name: string; onClose: () => void; onSave: (bill: Bill) => void }) {
+  const [name, setName] = useState(existing?.name || ""); const [category, setCategory] = useState(existing && !categories.includes(existing.category) ? "Custom" : existing?.category || "Utilities"); const [customCategory, setCustomCategory] = useState(existing?.category || ""); const [amount, setAmount] = useState(existing ? String(existing.amount) : ""); const [date, setDate] = useState(existing?.dueDate || todayISO()); const [recurrence, setRecurrence] = useState<Bill["recurrence"]>(existing?.recurrence || "monthly"); const [account, setAccount] = useState<AccountName>(existing?.account || "checking"); const [reminderDays, setReminderDays] = useState(existing?.reminderDays ?? 3);
+  const submit = (event: FormEvent) => { event.preventDefault(); const finalCategory = category === "Custom" ? customCategory.trim() : category; if (!name.trim() || !Number(amount) || !finalCategory) return; const nextCycle = existing && date !== existing.dueDate; onSave({ ...existing, id: existing?.id || makeId(), name: name.trim(), category: finalCategory, amount: Math.abs(Number(amount)), dueDate: date, recurrence, account, reminderDays, enteredBy: existing?.enteredBy || enteredBy, paid: nextCycle ? false : existing?.paid || false, paymentTransactionId: nextCycle ? undefined : existing?.paymentTransactionId }); };
+  return <Modal title={existing ? "Edit bill" : "Add an upcoming bill"} onClose={onClose}><form className="entry-form" onSubmit={submit}><label>Bill name<input autoFocus value={name} onChange={(event) => setName(event.target.value)} required /></label><div className="form-row"><label>Category<select value={category} onChange={(event) => setCategory(event.target.value)}>{categories.filter((item) => !item.toLowerCase().includes("income") && item !== "Salary").map((item) => <option key={item}>{item}</option>)}</select></label><label>Amount<input inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} required /></label></div>{category === "Custom" && <label>Custom category name<input value={customCategory} onChange={(event) => setCustomCategory(event.target.value)} required /></label>}<div className="form-row"><label>Due date<input type="date" value={date} onChange={(event) => setDate(event.target.value)} required /></label><label>Repeats<select value={recurrence} onChange={(event) => setRecurrence(event.target.value as Bill["recurrence"])}><option value="monthly">Monthly</option><option value="weekly">Weekly</option><option value="yearly">Yearly</option><option value="once">One time</option></select></label></div><div className="form-row"><label>Payment account<select value={account} onChange={(event) => setAccount(event.target.value as AccountName)}><option value="checking">Checking</option><option value="savings">Savings</option></select></label><label>Reminder<select value={reminderDays} onChange={(event) => setReminderDays(Number(event.target.value))}><option value={-1}>Off</option><option value={0}>On due date</option><option value={1}>1 day before</option><option value={3}>3 days before</option><option value={7}>7 days before</option></select></label></div><p className="settings-note">Reminders work while the app is open. Changing a paid bill’s due date schedules a new unpaid occurrence and keeps the previous payment history.</p><button className="primary-button submit-button" type="submit">{existing ? "Save bill" : "Add to bill planning"}</button></form></Modal>;
+}
+
+function BillPaymentDialog({ bill, data, name, onClose, onSave }: { bill: Bill; data: HouseholdData; name: string; onClose: () => void; onSave: (payment: Transaction) => void }) {
+  const [mode, setMode] = useState(bill.paid ? "existing" : "new"); const [selected, setSelected] = useState(""); const [amount, setAmount] = useState(String(bill.amount)); const [date, setDate] = useState(todayISO()); const [account, setAccount] = useState<AccountName>(bill.account || "checking");
+  const eligible = sortTransactions(data.transactions.filter((item) => item.amount < 0 && transactionKind(item) === "expense" && !item.billId));
+  const submit = (event: FormEvent) => { event.preventDefault(); if (mode === "existing") { const payment = eligible.find((item) => item.id === selected); if (payment) onSave(payment); return; } const value = Math.abs(Number(amount)); if (!Number.isFinite(value) || !value) return; onSave({ id: `bill-payment-${bill.id}-${bill.dueDate}`, billId: bill.id, description: bill.name, category: bill.category, amount: -value, date, account, type: "expense", status: "pending", enteredBy: name, createdAt: new Date().toISOString() }); };
+  return <Modal title={`Record payment: ${bill.name}`} onClose={onClose}><form className="entry-form" onSubmit={submit}><p>This records a payment you have made. It does not send money to the bill provider.</p><label>Payment entry<select value={mode} onChange={(event) => setMode(event.target.value)}><option value="new">Create a new transaction</option><option value="existing">Link a transaction already entered</option></select></label>{mode === "new" ? <><div className="form-row"><label>Paid amount<input value={amount} inputMode="decimal" onChange={(event) => setAmount(event.target.value)} required /></label><label>Payment date<input type="date" value={date} onChange={(event) => setDate(event.target.value)} required /></label></div><label>Paid from<select value={account} onChange={(event) => setAccount(event.target.value as AccountName)}><option value="checking">Checking</option><option value="savings">Savings</option></select></label><p className="settings-note">One pending expense will reduce this account and remove the bill from planning. Do not add the same payment again in Transactions.</p></> : <><label>Existing expense<select value={selected} onChange={(event) => setSelected(event.target.value)} required><option value="">Choose a transaction</option>{eligible.map((item) => <option key={item.id} value={item.id}>{item.date} · {item.description} · {currency.format(item.amount)}</option>)}</select></label><p className="settings-note">The chosen transaction already affects your balance. Linking it adds no additional expense.</p></>}<button className="primary-button" type="submit" disabled={bill.paid && Boolean(bill.paymentTransactionId)}>{mode === "new" ? "Record payment and transaction" : "Link transaction and mark paid"}</button></form></Modal>;
 }
 
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) { return <div className="modal-layer" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><header><div><span>HOUSEHOLD ENTRY</span><h2 id="modal-title">{title}</h2></div><button aria-label="Close" onClick={onClose}><X /></button></header>{children}</section></div>; }
@@ -633,7 +658,7 @@ function normalizeImport(row: Record<string, unknown>, enteredBy: string, source
   const transferTo: AccountName | undefined = type === "transfer" ? /online banking transfer from sav/i.test(description) || suppliedTransfer === "checking" ? "checking" : "savings" : undefined;
   const normalizedAmount = type === "transfer" ? Math.abs(amount) : amount;
   const fingerprint = `${date}|${description.toLowerCase()}|${normalizedAmount.toFixed(2)}|${type}|${account}`;
-  return { id: String(row.id || `import-${simpleHash(fingerprint)}`), date, description: cleanBankDescription(description), category: String(row.category || categorize(description, type)), amount: normalizedAmount, type, account, transferTo, affectsBalance: false, status: String(row.status || "posted").toLowerCase() === "pending" ? "pending" : "posted", notes: String(row.notes || ""), enteredBy: String(row.enteredBy || row.enteredby || enteredBy), createdAt: String(row.createdAt || row.createdat || new Date().toISOString()), importSource: source };
+  return { id: String(row.id || `import-${simpleHash(fingerprint)}`), date, description: cleanBankDescription(description), category: String(row.category || categorize(description, type)), amount: normalizedAmount, type, account, transferTo, affectsBalance: false, status: String(row.status || "posted").toLowerCase() === "pending" ? "pending" : "posted", notes: String(row.notes || ""), billId: row.billId || row.billid ? String(row.billId || row.billid) : undefined, enteredBy: String(row.enteredBy || row.enteredby || enteredBy), createdAt: String(row.createdAt || row.createdat || new Date().toISOString()), importSource: source };
 }
 function normalizeDate(value: string) { const cleaned = value.trim(); if (/^\d{4}-\d{2}-\d{2}$/.test(cleaned)) return cleaned; const match = cleaned.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); return match ? `${match[3]}-${match[1].padStart(2, "0")}-${match[2].padStart(2, "0")}` : ""; }
 function simpleHash(value: string) { let hash = 2166136261; for (let index = 0; index < value.length; index += 1) { hash ^= value.charCodeAt(index); hash = Math.imul(hash, 16777619); } return (hash >>> 0).toString(36); }

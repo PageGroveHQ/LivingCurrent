@@ -17,6 +17,7 @@ export type Transaction = {
   affectsBalance?: boolean;
   importSource?: string;
   status?: "pending" | "posted";
+  billId?: string;
 };
 
 export type Bill = {
@@ -27,6 +28,10 @@ export type Bill = {
   dueDate: string;
   recurrence: "monthly" | "weekly" | "yearly" | "once";
   paid: boolean;
+  paymentTransactionId?: string;
+  enteredBy?: string;
+  reminderDays?: number;
+  account?: AccountName;
 };
 
 export type HouseholdData = {
