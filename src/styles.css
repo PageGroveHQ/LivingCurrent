@@ -372,6 +372,12 @@ svg { width: 20px; height: 20px; stroke-width: 1.8; }
 .save-status { display:flex;align-items:center;justify-content:flex-end;gap:16px;padding:10px 24px;font-size:.8rem;color:#48665c;background:#e5eee8; }
 .save-status button { border:0;background:transparent;color:#173e32;text-decoration:underline;font:inherit;cursor:pointer; }
 .tools-panel { padding:24px;margin-bottom:22px; }
+.push-actions { display:flex;flex-wrap:wrap;gap:10px; }
+.reminder-disclosure { border-top:1px solid #dce4dc;margin-top:16px;padding-top:12px; }
+.reminder-disclosure summary { cursor:pointer;font-size:.85rem;color:#294b3f;padding:4px 0; }
+.reminder-disclosure summary:focus-visible { outline:2px solid #b88240;outline-offset:4px; }
+.reminder-disclosure .notification-health { border:0;margin:0;padding-top:8px; }
+.reminder-disclosure .notification-health h3 { display:none; }
 .tools-panel h3,.notification-health h3 { margin:0 0 12px; }
 .tools-panel p,.notification-health p { font-size:.85rem;line-height:1.6;color:#60746a; }
 .review-row { display:flex;align-items:center;gap:14px;padding:14px 0;border-top:1px solid #dde4dd; }

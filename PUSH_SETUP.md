@@ -18,7 +18,7 @@ The website stays on GitHub Pages and household data stays in Firebase. GitHub A
 ## Reminder behavior
 
 - Each bill has one lead time: 1, 3, 7 days before, or Off. Existing bills default to 3.
-- Morning checks run at 13:17 and 14:17 UTC. The script skips runs before 9 AM Eastern and deduplicates later runs. This covers daylight saving changes and supplies a second attempt in summer.
+- Morning checks run at 13:00 and 14:00 UTC, targeting 9:00 AM Eastern (EST/EDT). The script skips runs before 9 AM Eastern and deduplicates later runs. This covers daylight saving changes and supplies a second attempt in summer. GitHub scheduling can delay delivery.
 - A reminder goes out once per bill ID/due date/lead-time/device. Late-added bills or devices catch up within the selected window through the due date, not after it. Changing the reminder lead time can result in another reminder.
 - Paid/deleted bills are rechecked immediately before sending. A payment made after a message has already been sent cannot recall that notification.
 - Tap a notification to open Bills. The message intentionally omits bill names and dollar amounts.
