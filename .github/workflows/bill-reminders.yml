@@ -1,0 +1,48 @@
+name: Send Living Current bill reminders
+on:
+  schedule:
+    # UTC: Eastern morning in summer/winter, plus a deduplicated retry.
+    - cron: '17 13,14 * * *'
+  workflow_dispatch:
+    inputs:
+      test:
+        description: 'Send a generic background test to registered devices (no bill reminders)'
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: living-current-bill-reminders
+  cancel-in-progress: false
+jobs:
+  reminders:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.LIVING_CURRENT_FIREBASE_SERVICE_ACCOUNT_JSON }}
+      FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
+      HOUSEHOLD_ID: ${{ secrets.VITE_FIREBASE_HOUSEHOLD_ID }}
+      VAPID_PUBLIC_KEY: ${{ secrets.VITE_WEB_PUSH_PUBLIC_KEY }}
+      VAPID_PRIVATE_KEY: ${{ secrets.LIVING_CURRENT_WEB_PUSH_PRIVATE_KEY }}
+      TEST_PUSH: ${{ inputs.test || 'false' }}
+      MANUAL_RUN: ${{ github.event_name == 'workflow_dispatch' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+      - run: npm ci --prefix functions
+      - run: npm test --prefix functions
+      - name: Check push setup
+        id: setup
+        run: |
+          if [ -n "$FIREBASE_SERVICE_ACCOUNT_JSON" ] && [ -n "$FIREBASE_PROJECT_ID" ] && [ -n "$VAPID_PUBLIC_KEY" ] && [ -n "$VAPID_PRIVATE_KEY" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Push is not active yet. Configure the secrets listed in PUSH_SETUP.md."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+      - run: npm run send --prefix functions
+        if: steps.setup.outputs.ready == 'true'

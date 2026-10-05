@@ -3,6 +3,8 @@ dist/
 .env
 .env.local
 .firebase/
+functions/.push-setup/
+*service-account*.json
 firebase-debug.log
 *.log
 *.tsbuildinfo

@@ -46,7 +46,7 @@ Bill Planning is the total of unpaid bills due within 31 days. It does not move 
 
 Use **Record payment** on a bill to create one expense transaction, or link an expense you already entered. You can also select a bill while adding an expense. The transaction changes the chosen account balance; the paid bill leaves planning. Linking an existing transaction never creates a second expense. Deleting or unlinking its payment reopens the bill. Deleting a bill preserves its payment transaction. For the next billing cycle, edit the bill's due date; the prior payment remains in history.
 
-Reminders appear inside the app. Optional browser notifications run while the app is open, subject to browser support and permission; there is no closed-app background push service.
+Reminders appear inside the app. Optional background Web Push runs through GitHub Actions, not Firebase Cloud Functions. See [push setup](PUSH_SETUP.md). It requires one-time credential/rules setup and notification permission on each device. Notifications are generic for lock-screen privacy. Paid bill cards show both the transaction's paid date and the bill's due date.
 
 Run `npm test` to verify cloud merge, transaction ordering, and bill-payment balance invariants.
 

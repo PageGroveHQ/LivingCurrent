@@ -49,7 +49,7 @@ const firebaseConfig = {
 export const householdId = import.meta.env.VITE_FIREBASE_HOUSEHOLD_ID || "living-current-home";
 export const firebaseConfigured = Boolean(firebaseConfig.apiKey && firebaseConfig.projectId && firebaseConfig.appId);
 
-const firebaseApp = () => getApps()[0] ?? initializeApp(firebaseConfig);
+export const firebaseApp = () => getApps()[0] ?? initializeApp(firebaseConfig);
 
 export function observeHouseholdAuth(onChange: (user: User | null) => void) {
   if (!firebaseConfigured) {

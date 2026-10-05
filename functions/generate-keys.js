@@ -1,0 +1,10 @@
+const fs = require("node:fs");
+const path = require("node:path");
+const webpush = require("web-push");
+const destination = path.join(__dirname, ".push-setup");
+if (fs.existsSync(destination)) throw new Error("Keys already generated. Keep the existing pair; do not rotate without re-registering devices.");
+fs.mkdirSync(destination, { mode: 0o700 });
+const keys = webpush.generateVAPIDKeys();
+fs.writeFileSync(path.join(destination, "public-key.txt"), keys.publicKey, { mode: 0o600 });
+fs.writeFileSync(path.join(destination, "private-key.txt"), keys.privateKey, { mode: 0o600 });
+console.log("Keys saved in ignored functions/.push-setup. Add them to GitHub secrets; never commit the private key.");

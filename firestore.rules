@@ -19,6 +19,29 @@ service cloud.firestore {
         && request.resource.data.memberUids.size() == 1
         && request.resource.data.memberUids[0] == request.auth.uid;
       allow delete: if false;
+      match /pushDevices/{deviceId} {
+        function householdMember() {
+          return request.auth != null && request.auth.uid in get(/databases/$(database)/documents/households/$(householdId)).data.memberUids;
+        }
+        allow get, delete: if householdMember();
+        allow list: if false;
+        allow create, update: if householdMember()
+          && deviceId.matches('^[a-f0-9]{64}$')
+          && request.resource.data.keys().hasOnly(['endpoint', 'keys', 'registeredBy', 'publicKey', 'updatedAt'])
+          && request.resource.data.registeredBy == request.auth.uid
+          && request.resource.data.endpoint is string
+          && request.resource.data.endpoint.size() < 2048
+          && request.resource.data.endpoint.matches('^https://(fcm[.]googleapis[.]com|updates[.]push[.]services[.]mozilla[.]com|web[.]push[.]apple[.]com)/.*')
+          && request.resource.data.keys.keys().hasOnly(['p256dh', 'auth'])
+          && request.resource.data.keys.p256dh is string
+          && request.resource.data.keys.p256dh.size() <= 100
+          && request.resource.data.keys.auth is string
+          && request.resource.data.keys.auth.size() <= 30
+          && request.resource.data.publicKey is string
+          && request.resource.data.publicKey.size() <= 100
+          && request.resource.data.updatedAt is string;
+      }
+      match /pushDeliveries/{deliveryId} { allow read, write: if false; }
     }
   }
 }
