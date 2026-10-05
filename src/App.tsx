@@ -34,7 +34,9 @@ import {
 } from "lucide-react";
 import { createDemoData } from "./demo-data";
 import PushSettings from "./PushSettings";
-import { recordBillPayment, reconcileBillPayments } from "./lib/billing";
+import { recordBillPayment, reconcileBillPayments, prepareNextBillCycles } from "./lib/billing";
+import { keepRecovery, recoverRecord } from "./lib/recovery";
+import { MonthlySummary, PendingReview, RecoveryPanel } from "./HouseholdTools";
 import {
   createDataStore,
   createHouseholdAccount,
@@ -63,7 +65,7 @@ const todayISO = () => {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 };
 const makeId = () => crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-const daysUntil = (date: string) => Math.ceil((new Date(`${date}T12:00:00`).getTime() - new Date(`${todayISO()}T12:00:00`).getTime()) / 86_400_000);
+const daysUntil = (date: string) => Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${todayISO()}T00:00:00Z`)) / 86_400_000);
 const monthKey = (date = todayISO()) => date.slice(0, 7);
 const monthLabel = (key: string) => new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric" }).format(new Date(`${key}-01T12:00:00`));
 const transactionKind = (item: Transaction): TransactionKind => item.type || (item.amount < 0 ? "expense" : "income");
@@ -125,6 +127,7 @@ function App() {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [toast, setToast] = useState("");
+  const [undoId, setUndoId] = useState("");
   const [deviceRole, setDeviceRole] = useState<DeviceRole>(() => localStorage.getItem("living-current-device-role") === "partner" ? "partner" : "primary");
   const store = useRef<DataStore | null>(null);
   const dataRef = useRef(data);
@@ -167,7 +170,22 @@ function App() {
   }, [toast]);
 
   const updateData = (updater: (current: HouseholdData) => HouseholdData, message?: string) => {
-    const next = { ...reconcileBillPayments(updater(dataRef.current)), updatedAt: new Date().toISOString() };
+    const before = dataRef.current;
+    let changed = updater(before);
+    if (changed.recovery === before.recovery) {
+      for (const kind of ["transaction", "bill"] as const) {
+        const oldRows = kind === "transaction" ? before.transactions : before.bills;
+        const newRows = kind === "transaction" ? changed.transactions : changed.bills;
+        for (const row of oldRows) {
+          const replacement = newRows.find((item) => item.id === row.id);
+          if (!replacement || JSON.stringify(replacement) !== JSON.stringify(row)) {
+            changed = keepRecovery(changed, kind, replacement ? "edited" : "deleted", row);
+            if (!replacement) setUndoId(changed.recovery![changed.recovery!.length - 1].id);
+          }
+        }
+      }
+    }
+    const next = { ...reconcileBillPayments(changed), updatedAt: new Date().toISOString() };
     dataRef.current = next;
     setData(next);
     void store.current?.save(next);
@@ -197,6 +215,12 @@ function App() {
     setEditingBill(null);
   };
 
+  useEffect(() => {
+    if (!storeReady) return;
+    const prepared = prepareNextBillCycles(dataRef.current);
+    if (prepared.bills.length !== dataRef.current.bills.length) updateData(() => prepared, "Next recurring bill cycle prepared");
+  }, [storeReady, data.bills]);
+
   const navigate = (next: View) => {
     setView(next);
     setMenuOpen(false);
@@ -223,7 +247,7 @@ function App() {
         </div>
         <nav aria-label="Main navigation">
           <NavButton active={view === "overview"} icon={<Home />} label="Overview" onClick={() => navigate("overview")} />
-          <NavButton active={view === "activity"} icon={<ReceiptText />} label="Activity" onClick={() => navigate("activity")} />
+          <NavButton active={view === "activity"} icon={<ReceiptText />} label="Transactions" onClick={() => navigate("activity")} />
           <NavButton active={view === "archive"} icon={<Archive />} label="Monthly archive" onClick={() => navigate("archive")} />
           <NavButton active={view === "bills"} icon={<CalendarDays />} label="Bills" onClick={() => navigate("bills")} />
           <NavButton active={view === "import"} icon={<Upload />} label="Import & export" onClick={() => navigate("import")} />
@@ -239,7 +263,7 @@ function App() {
 
       {menuOpen && <button className="menu-backdrop" aria-label="Close menu" onClick={() => setMenuOpen(false)} />}
 
-      <main className="main-panel">
+      <main className="main-panel"><div className="save-status" role="status">{saveStatus(sync, lastSyncAt)}{undoId && data.recovery?.some((item) => item.id === undoId) && <button onClick={() => { updateData((current) => recoverRecord(current, undoId), "Deletion undone"); setUndoId(""); }}>Undo last deletion</button>}</div>
         <header className="topbar">
           <button className="menu-button" aria-label="Open menu" onClick={() => setMenuOpen(true)}><Menu /></button>
           <div className="page-heading">
@@ -252,18 +276,18 @@ function App() {
           </div>
         </header>
 
-        {view === "overview" && <Overview data={data} totals={totals} onNavigate={navigate} onAdd={() => setTransactionOpen(true)} onToggleBill={(id) => setPayingBill(data.bills.find((bill) => bill.id === id) || null)} />}
-        {view === "activity" && <Activity data={data} onEdit={setEditingTransaction} onDelete={(id) => updateData((current) => ({ ...current, transactions: current.transactions.filter((item) => item.id !== id) }), "Transaction removed")} />}
+        {view === "overview" && <Overview data={data} sync={sync} lastSyncAt={lastSyncAt} totals={totals} onNavigate={navigate} onAdd={() => setTransactionOpen(true)} onToggleBill={(id) => setPayingBill(data.bills.find((bill) => bill.id === id) || null)} />}
+        {view === "activity" && <Activity data={data} onPosted={(item) => updateData((current) => ({ ...current, transactions: current.transactions.map((row) => row.id === item.id ? { ...row, status: "posted", updatedAt: new Date().toISOString() } : row) }), "Transaction marked posted")} onEdit={setEditingTransaction} onDelete={(id) => updateData((current) => ({ ...current, transactions: current.transactions.filter((item) => item.id !== id) }), "Transaction removed")} />}
         {view === "archive" && <ArchiveView data={data} onEdit={setEditingTransaction} />}
         {view === "bills" && <Bills data={data} onAdd={() => setBillOpen(true)} onEdit={setEditingBill} onPay={setPayingBill} onDelete={(id) => updateData((current) => ({ ...current, bills: current.bills.filter((bill) => bill.id !== id) }), "Bill removed; payment history kept")} />}
         {view === "import" && <ImportExport data={data} enteredBy={deviceRole === "primary" ? data.displayName : data.partnerName} onImport={(transactions) => updateData((current) => ({ ...current, transactions: mergeImportedTransactions(current.transactions, transactions) }), `${transactions.length} transactions reviewed for import`)} />}
         {view === "sync" && <SyncView data={data} sync={sync} email={authUser?.email || ""} lastSyncAt={lastSyncAt} onRefresh={refreshCloud} />}
-        {view === "settings" && <SettingsView data={data} sync={sync} email={authUser?.email || ""} uid={deviceUid} deviceRole={deviceRole} onBeforeUpdate={async () => { await store.current?.flush(); }} onDeviceRoleChange={(role) => { localStorage.setItem("living-current-device-role", role); setDeviceRole(role); setToast("This device identity was updated"); }} onSignOut={() => void signOutOfHousehold()} onSave={(values) => updateData((current) => ({ ...current, ...values }), "Settings saved")} />}
+        {view === "settings" && <SettingsView onRestore={(id) => updateData((current) => recoverRecord(current, id), "Record restored")} data={data} sync={sync} email={authUser?.email || ""} uid={deviceUid} deviceRole={deviceRole} onBeforeUpdate={async () => { await store.current?.flush(); }} onDeviceRoleChange={(role) => { localStorage.setItem("living-current-device-role", role); setDeviceRole(role); setToast("This device identity was updated"); }} onSignOut={() => void signOutOfHousehold()} onSave={(values) => updateData((current) => ({ ...current, ...values }), "Settings saved")} />}
       </main>
 
       <nav className="bottom-nav" aria-label="Mobile navigation">
         <NavButton active={view === "overview"} icon={<Home />} label="Home" onClick={() => navigate("overview")} />
-        <NavButton active={view === "activity"} icon={<ReceiptText />} label="Activity" onClick={() => navigate("activity")} />
+        <NavButton active={view === "activity"} icon={<ReceiptText />} label="Transactions" onClick={() => navigate("activity")} />
         <button className="bottom-add" aria-label="Add transaction" onClick={() => setTransactionOpen(true)}><Plus /></button>
         <NavButton active={view === "bills"} icon={<CalendarDays />} label="Bills" onClick={() => navigate("bills")} />
         <NavButton active={view === "settings"} icon={<Settings />} label="Settings" onClick={() => navigate("settings")} />
@@ -341,7 +365,7 @@ function LoadingScreen({ ready, onContinue }: { ready: boolean; onContinue: () =
   );
 }
 
-function Overview({ data, totals, onNavigate, onAdd, onToggleBill }: { data: HouseholdData; totals: { income: number; spending: number; reserved: number; current: number; available: number; checking: number; savings: number }; onNavigate: (view: View) => void; onAdd: () => void; onToggleBill: (id: string) => void }) {
+function Overview({ data, totals, onNavigate, onAdd, onToggleBill, sync, lastSyncAt }: { sync: SyncState; lastSyncAt: Date | null; data: HouseholdData; totals: { income: number; spending: number; reserved: number; current: number; available: number; checking: number; savings: number }; onNavigate: (view: View) => void; onAdd: () => void; onToggleBill: (id: string) => void }) {
   const currentTransactions = sortTransactions(data.transactions.filter((item) => monthKey(item.date) === monthKey()));
   const recent = currentTransactions.slice(0, 5);
   const upcoming = data.bills.filter(plannedBill).slice(0, 3);
@@ -357,7 +381,7 @@ function Overview({ data, totals, onNavigate, onAdd, onToggleBill }: { data: Hou
       <section className="balance-hero">
         <div className="hero-current" aria-hidden="true"><i /><i /><i /><i /></div>
         <div className="balance-copy"><span>CURRENT BALANCE</span><strong>{currency.format(totals.current)}</strong><p>{currency.format(totals.checking)} checking + {currency.format(totals.savings)} savings</p><div className={`available-callout ${totals.available < 0 ? "negative" : ""}`}><span>Available after bill planning and safety buffer</span><b>{currency.format(totals.available)}</b></div></div>
-        <div className="balance-actions"><button onClick={onAdd}><Plus /> Record movement</button><span><CloudCheck /> Updated moments ago</span></div>
+        <div className="balance-actions"><button onClick={onAdd}><Plus /> Add transaction</button><span><CloudCheck />{saveStatus(sync, lastSyncAt)}</span></div>
         <div className="balance-breakdown">
           <Metric label="Bill planning" value={totals.reserved} />
           <Metric label="Income recorded" value={totals.income} tone="positive" />
@@ -369,7 +393,7 @@ function Overview({ data, totals, onNavigate, onAdd, onToggleBill }: { data: Hou
 
       <div className="dashboard-grid">
         <section className="panel flow-panel">
-          <PanelHeader eyebrow={monthLabel(monthKey()).toUpperCase()} title="Household current" action="View activity" onAction={() => onNavigate("activity")} />
+          <PanelHeader eyebrow={monthLabel(monthKey()).toUpperCase()} title="Household current" action="View transactions" onAction={() => onNavigate("activity")} />
           <div className="flow-summary"><div><ArrowUpRight /><span>Income</span><strong>{currency.format(totals.income)}</strong></div><div><ArrowDownLeft /><span>Outflow</span><strong>{currency.format(totals.spending)}</strong></div></div>
           <CashFlowChart transactions={currentTransactions} />
         </section>
@@ -383,7 +407,7 @@ function Overview({ data, totals, onNavigate, onAdd, onToggleBill }: { data: Hou
         </section>
 
         <section className="panel transactions-panel">
-          <PanelHeader eyebrow="LATEST ENTRIES" title="Recent activity" action="See all" onAction={() => onNavigate("activity")} />
+          <PanelHeader eyebrow="LATEST ENTRIES" title="Recent transactions" action="See all" onAction={() => onNavigate("activity")} />
           <div className="transaction-list">{recent.map((item) => <TransactionRow key={item.id} item={item} />)}</div>
         </section>
 
@@ -399,9 +423,9 @@ function Overview({ data, totals, onNavigate, onAdd, onToggleBill }: { data: Hou
   );
 }
 
-function Activity({ data, onDelete, onEdit }: { data: HouseholdData; onDelete: (id: string) => void; onEdit: (item: Transaction) => void }) {
+function Activity({ data, onDelete, onEdit, onPosted }: { data: HouseholdData; onDelete: (id: string) => void; onEdit: (item: Transaction) => void; onPosted: (item: Transaction) => void }) {
   const current = data.transactions.filter((item) => monthKey(item.date) === monthKey());
-  return <div className="page-content"><section className="section-intro"><div><span>{monthLabel(monthKey()).toUpperCase()}</span><h2>This month’s activity.</h2><p>{current.length} entries. All remain accessible; earlier months are in Monthly archive.</p></div></section><TransactionBrowser transactions={current} onEdit={onEdit} onDelete={onDelete} /></div>;
+  return <div className="page-content"><section className="section-intro"><div><span>{monthLabel(monthKey()).toUpperCase()}</span><h2>This month’s transactions.</h2><p>{current.length} entries. All remain accessible; earlier months are in Monthly archive.</p></div></section><MonthlySummary transactions={data.transactions} month={monthKey()} /><PendingReview transactions={data.transactions} onEdit={onEdit} onPosted={onPosted} /><TransactionBrowser transactions={current} onEdit={onEdit} onDelete={onDelete} /></div>;
 }
 
 type ListSort = "date" | "category" | "person" | "credit" | "debit";
@@ -434,9 +458,9 @@ function ArchiveView({ data, onEdit }: { data: HouseholdData; onEdit: (item: Tra
           <div><span>INCOME</span><strong className="amount-positive">{currency.format(income)}</strong></div>
           <div><span>SPENDING</span><strong className="amount-negative">{currency.format(-spending)}</strong></div>
           <div><span>TRANSFERS</span><strong>{currency.format(transfers)}</strong></div>
-          <div><span>NET ACTIVITY</span><strong className={income - spending >= 0 ? "amount-positive" : "amount-negative"}>{currency.format(income - spending)}</strong></div>
+          <div><span>NET TRANSACTIONS</span><strong className={income - spending >= 0 ? "amount-positive" : "amount-negative"}>{currency.format(income - spending)}</strong></div>
         </section>
-        <TransactionBrowser key={selectedMonth} transactions={transactions} onEdit={onEdit} />
+        <MonthlySummary transactions={data.transactions} month={selectedMonth} /><TransactionBrowser key={selectedMonth} transactions={transactions} onEdit={onEdit} />
       </>}
     </div>
   );
@@ -452,7 +476,7 @@ function Bills({ data, onAdd, onPay, onEdit, onDelete }: { data: HouseholdData; 
   const unpaid = data.bills.filter(plannedBill).reduce((sum, bill) => sum + bill.amount, 0);
   const visible = data.bills.filter((bill) => [bill.name, bill.category, bill.enteredBy || "Household"].join(" ").toLowerCase().includes(query.toLowerCase()) && (!category || bill.category === category) && (!person || (bill.enteredBy || "Household") === person) && (!status || (status === "paid" ? bill.paid : !bill.paid)) && (!direction || direction === "debit"));
   visible.sort((a, b) => (sort === "category" ? a.category.localeCompare(b.category) : sort === "person" ? (a.enteredBy || "Household").localeCompare(b.enteredBy || "Household") : sort === "credit" ? a.amount - b.amount : sort === "debit" ? b.amount - a.amount : 0) || a.dueDate.localeCompare(b.dueDate));
-  return <div className="page-content"><section className="section-intro"><div><span>BILL PLANNING</span><h2>Know what the current carries next.</h2><p>{currency.format(unpaid)} reserved for unpaid bills due within 31 days. Planning reduces available funds; recording payment reduces the chosen account once.</p></div><button className="primary-button" onClick={onAdd}><Plus /> Add bill</button></section><ListControls query={query} setQuery={setQuery} category={category} setCategory={setCategory} person={person} setPerson={setPerson} direction={direction} setDirection={setDirection} sort={sort} setSort={setSort} categoryOptions={[...new Set(data.bills.map((item) => item.category))].sort()} personOptions={[...new Set(data.bills.map((item) => item.enteredBy || "Household"))].sort()} /><label className="bill-status-filter">Payment status<select value={status} onChange={(event) => setStatus(event.target.value)}><option value="">All bills</option><option value="unpaid">Unpaid</option><option value="paid">Paid</option></select></label><p className="list-note">Bills are planned debits. Credit and transfer filters apply to Transactions.</p><div className="bill-card-grid">{visible.map((bill) => <article className={`bill-card ${bill.paid ? "is-paid" : ""}`} key={bill.id}><div className="bill-card-top"><div className="bill-emblem"><ReceiptText /></div><span>{bill.recurrence}</span><div className="ledger-actions"><button aria-label={`Edit ${bill.name}`} onClick={() => onEdit(bill)}><Pencil /></button><button aria-label={`Delete ${bill.name}`} onClick={() => setDeleting(bill)}><Trash2 /></button></div></div><small>{bill.category} · {bill.enteredBy || "Household"}</small><h3>{bill.name}</h3><strong>{currency.format(bill.amount)}</strong><p className="list-note">{(bill.reminderDays ?? 3) < 0 ? "Reminders off" : `Reminder: ${bill.reminderDays ?? 3} days before due`}</p><div className="bill-card-foot"><div><span>{bill.paid ? billPaymentLabel(bill, data.transactions) : daysUntil(bill.dueDate) < 0 ? "Overdue" : `Due in ${daysUntil(bill.dueDate)} days`}</span><small>Due {shortDate.format(new Date(`${bill.dueDate}T12:00:00`))}</small></div>{!bill.paid && <button onClick={() => onPay(bill)}>Record payment</button>}{bill.paid && !bill.paymentTransactionId && <button onClick={() => onPay(bill)}>Link payment</button>}{bill.paid && <span>{bill.paymentTransactionId ? "Linked transaction" : "Previously marked paid"}</span>}</div></article>)}</div>{!visible.length && <EmptyState icon={<Search />} title="No matching bills" copy="Add a bill or change your filters." />}{deleting && <Modal title="Delete bill?" onClose={() => setDeleting(null)}><div className="entry-form"><p>Remove {deleting.name} from bill planning and reminders? Any payment transaction will remain in your account history.</p><button className="primary-button" onClick={() => { onDelete(deleting.id); setDeleting(null); }}>Delete bill</button></div></Modal>}</div>;
+  return <div className="page-content"><section className="section-intro"><div><span>BILL PLANNING</span><h2>Know what the current carries next.</h2><p>{currency.format(unpaid)} reserved for unpaid bills due within 31 days. Planning reduces available funds; recording payment reduces the chosen account once.</p></div><button className="primary-button" onClick={onAdd}><Plus /> Add bill</button></section><ListControls query={query} setQuery={setQuery} category={category} setCategory={setCategory} person={person} setPerson={setPerson} direction={direction} setDirection={setDirection} sort={sort} setSort={setSort} categoryOptions={[...new Set(data.bills.map((item) => item.category))].sort()} personOptions={[...new Set(data.bills.map((item) => item.enteredBy || "Household"))].sort()} /><label className="bill-status-filter">Payment status<select value={status} onChange={(event) => setStatus(event.target.value)}><option value="">All bills</option><option value="unpaid">Unpaid</option><option value="paid">Paid</option></select></label><p className="list-note">Bills are planned debits. Credit and transfer filters apply to Transactions.</p><div className="bill-card-grid">{visible.map((bill) => <article className={`bill-card ${bill.paid ? "is-paid" : ""}`} key={bill.id}><div className="bill-card-top"><div className="bill-emblem"><ReceiptText /></div><span>{bill.recurrence} · {monthLabel(monthKey(bill.dueDate))}</span><div className="ledger-actions"><button aria-label={`Edit ${bill.name} due ${bill.dueDate}`} onClick={() => onEdit(bill)}><Pencil /></button><button aria-label={`Delete ${bill.name} due ${bill.dueDate}`} onClick={() => setDeleting(bill)}><Trash2 /></button></div></div><small>{bill.category} · {bill.enteredBy || "Household"}</small><h3>{bill.name}</h3><strong>{currency.format(bill.amount)}</strong><p className="list-note">{(bill.reminderDays ?? 3) < 0 ? "Reminders off" : `Reminder: ${bill.reminderDays ?? 3} days before due`}</p><div className="bill-card-foot"><div><span>{bill.paid ? billPaymentLabel(bill, data.transactions) : daysUntil(bill.dueDate) < 0 ? "Overdue" : `Due in ${daysUntil(bill.dueDate)} days`}</span><small>Due {shortDate.format(new Date(`${bill.dueDate}T12:00:00`))}</small></div>{!bill.paid && <button onClick={() => onPay(bill)}>Record payment</button>}{bill.paid && !bill.paymentTransactionId && <button onClick={() => onPay(bill)}>Link payment</button>}{bill.paid && <span>{bill.paymentTransactionId ? "Linked transaction" : "Previously marked paid"}</span>}</div></article>)}</div>{!visible.length && <EmptyState icon={<Search />} title="No matching bills" copy="Add a bill or change your filters." />}{deleting && <Modal title="Delete bill?" onClose={() => setDeleting(null)}><div className="entry-form"><p>Remove {deleting.name} from bill planning and reminders? Any payment transaction will remain in your account history. The deleted occurrence will be available in Settings → Recovery.</p><button className="primary-button" onClick={() => { onDelete(deleting.id); setDeleting(null); }}>Delete bill</button></div></Modal>}</div>;
 }
 
 function ImportExport({ data, enteredBy, onImport }: { data: HouseholdData; enteredBy: string; onImport: (transactions: Transaction[]) => void }) {
@@ -503,7 +527,7 @@ function ImportExport({ data, enteredBy, onImport }: { data: HouseholdData; ente
   );
 }
 
-function SettingsView({ data, sync, email, uid, deviceRole, onDeviceRoleChange, onSave, onSignOut, onBeforeUpdate }: { data: HouseholdData; sync: SyncState; email: string; uid: string; deviceRole: DeviceRole; onDeviceRoleChange: (role: DeviceRole) => void; onSave: (values: Partial<HouseholdData>) => void; onSignOut: () => void; onBeforeUpdate: () => Promise<void> }) {
+function SettingsView({ data, sync, email, uid, deviceRole, onDeviceRoleChange, onSave, onSignOut, onBeforeUpdate, onRestore }: { onRestore: (id: string) => void; data: HouseholdData; sync: SyncState; email: string; uid: string; deviceRole: DeviceRole; onDeviceRoleChange: (role: DeviceRole) => void; onSave: (values: Partial<HouseholdData>) => void; onSignOut: () => void; onBeforeUpdate: () => Promise<void> }) {
   const [updatingApp, setUpdatingApp] = useState(false);
   const [updateError, setUpdateError] = useState("");
   const updateApp = async () => { setUpdatingApp(true); setUpdateError(""); try { await onBeforeUpdate(); const url = new URL(window.location.href); url.searchParams.set("app-update", String(Date.now())); const response = await fetch(url, { cache: "no-store" }); if (!response.ok) throw new Error("Could not download the latest app."); if ("serviceWorker" in navigator) { const registration = await navigator.serviceWorker.getRegistration(import.meta.env.BASE_URL); await registration?.update(); } if ("caches" in window) await Promise.all((await caches.keys()).filter((key) => key.startsWith("living-current-")).map((key) => caches.delete(key))); window.location.replace(url.toString()); } catch { setUpdatingApp(false); setUpdateError("Update paused. Your entries are kept on this device; reconnect so they can finish saving, then try again."); } };
@@ -526,6 +550,7 @@ function SettingsView({ data, sync, email, uid, deviceRole, onDeviceRoleChange, 
         <section className="panel settings-form"><h3>App updates</h3><p>Load the latest published Living Current version. Your saved household records stay in place.</p><button type="button" className="primary-button" disabled={updatingApp || sync === "connecting" || sync === "offline"} onClick={() => void updateApp()}><RefreshCw />{updatingApp ? "Updating…" : "Update app"}</button>{updateError && <p role="alert">{updateError}</p>}</section>
         </div>
       </div>
+      <RecoveryPanel records={data.recovery || []} onRestore={onRestore} />
     </div>
   );
 }
@@ -583,7 +608,7 @@ function TransactionDialog({ name, existing, bills, onClose, onSave }: { name: s
     if (!description.trim() || !value || !finalCategory || (kind === "transfer" && account === transferTo)) return;
     onSave({ ...existing, id: existing?.id || (billId ? `bill-payment-${billId}-${bills.find((bill) => bill.id === billId)?.dueDate}` : makeId()), billId: kind === "expense" ? billId || undefined : undefined, date, description: description.trim(), category: finalCategory, amount: kind === "expense" ? -value : value, type: kind, account, transferTo: kind === "transfer" ? transferTo : undefined, affectsBalance: true, status, notes: notes.trim(), enteredBy: existing?.enteredBy || name || "Household", createdAt: existing?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString() });
   };
-  return <Modal title={existing ? "Edit transaction" : "Record a movement"} onClose={onClose}><form className="entry-form" onSubmit={submit}>
+  return <Modal title={existing ? "Edit transaction" : "Add transaction"} onClose={onClose}><form className="entry-form" onSubmit={submit}>
     <div className="type-toggle type-toggle-three"><button type="button" className={kind === "expense" ? "active" : ""} onClick={() => setKind("expense")}><ArrowUpRight /> Expense</button><button type="button" className={kind === "income" ? "active" : ""} onClick={() => setKind("income")}><ArrowDownLeft /> Income</button><button type="button" className={kind === "transfer" ? "active" : ""} onClick={() => setKind("transfer")}><ArrowRightLeft /> Transfer</button></div>
     {kind === "expense" && <label>Bill payment (optional)<select value={billId} onChange={(event) => setBillId(event.target.value)}><option value="">Not linked to a bill</option>{bills.filter((bill) => !bill.paid || bill.paymentTransactionId === existing?.id).map((bill) => <option key={bill.id} value={bill.id}>{bill.name} · Due {bill.dueDate}</option>)}</select></label>}
     <label>Description<input autoFocus value={description} onChange={(event) => setDescription(event.target.value)} placeholder={kind === "transfer" ? "Move rent funds" : "Publix"} required /></label>
@@ -599,13 +624,13 @@ function TransactionDialog({ name, existing, bills, onClose, onSave }: { name: s
 
 function BillDialog({ existing, name: enteredBy, onClose, onSave }: { existing?: Bill; name: string; onClose: () => void; onSave: (bill: Bill) => void }) {
   const [name, setName] = useState(existing?.name || ""); const [category, setCategory] = useState(existing && !categories.includes(existing.category) ? "Custom" : existing?.category || "Utilities"); const [customCategory, setCustomCategory] = useState(existing?.category || ""); const [amount, setAmount] = useState(existing ? String(existing.amount) : ""); const [date, setDate] = useState(existing?.dueDate || todayISO()); const [recurrence, setRecurrence] = useState<Bill["recurrence"]>(existing?.recurrence || "monthly"); const [account, setAccount] = useState<AccountName>(existing?.account || "checking"); const [reminderDays, setReminderDays] = useState(existing?.reminderDays ?? 3);
-  const submit = (event: FormEvent) => { event.preventDefault(); const finalCategory = category === "Custom" ? customCategory.trim() : category; if (!name.trim() || !Number(amount) || !finalCategory) return; const nextCycle = existing && date !== existing.dueDate; onSave({ ...existing, id: existing?.id || makeId(), name: name.trim(), category: finalCategory, amount: Math.abs(Number(amount)), dueDate: date, recurrence, account, reminderDays, enteredBy: existing?.enteredBy || enteredBy, paid: nextCycle ? false : existing?.paid || false, paymentTransactionId: nextCycle ? undefined : existing?.paymentTransactionId }); };
-  return <Modal title={existing ? "Edit bill" : "Add an upcoming bill"} onClose={onClose}><form className="entry-form" onSubmit={submit}><label>Bill name<input autoFocus value={name} onChange={(event) => setName(event.target.value)} required /></label><div className="form-row"><label>Category<select value={category} onChange={(event) => setCategory(event.target.value)}>{categories.filter((item) => !item.toLowerCase().includes("income") && item !== "Salary").map((item) => <option key={item}>{item}</option>)}</select></label><label>Amount<input inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} required /></label></div>{category === "Custom" && <label>Custom category name<input value={customCategory} onChange={(event) => setCustomCategory(event.target.value)} required /></label>}<div className="form-row"><label>Due date<input type="date" value={date} onChange={(event) => setDate(event.target.value)} required /></label><label>Repeats<select value={recurrence} onChange={(event) => setRecurrence(event.target.value as Bill["recurrence"])}><option value="monthly">Monthly</option><option value="weekly">Weekly</option><option value="yearly">Yearly</option><option value="once">One time</option></select></label></div><div className="form-row"><label>Payment account<select value={account} onChange={(event) => setAccount(event.target.value as AccountName)}><option value="checking">Checking</option><option value="savings">Savings</option></select></label><label>Reminder<select value={reminderDays} onChange={(event) => setReminderDays(Number(event.target.value))}><option value={-1}>Off</option><option value={1}>1 day before</option><option value={3}>3 days before</option><option value={7}>7 days before</option></select></label></div><p className="settings-note">Background reminders require device registration from the bell menu. Changing a paid bill’s due date schedules a new unpaid occurrence and keeps the previous payment history.</p><button className="primary-button submit-button" type="submit">{existing ? "Save bill" : "Add to bill planning"}</button></form></Modal>;
+  const submit = (event: FormEvent) => { event.preventDefault(); const finalCategory = category === "Custom" ? customCategory.trim() : category; if (!name.trim() || !Number(amount) || !Number.isFinite(Number(amount)) || !finalCategory) return; const nextCycle = existing && date !== existing.dueDate; onSave({ ...existing, id: existing?.id || makeId(), name: name.trim(), category: finalCategory, amount: Math.abs(Number(amount)), dueDate: date, recurrenceAnchorDate: nextCycle ? date : existing?.recurrenceAnchorDate || date, recurrence, account, reminderDays, enteredBy: existing?.enteredBy || enteredBy, paid: nextCycle ? false : existing?.paid || false, paymentTransactionId: nextCycle ? undefined : existing?.paymentTransactionId }); };
+  return <Modal title={existing ? "Edit bill" : "Add an upcoming bill"} onClose={onClose}><form className="entry-form" onSubmit={submit}><label>Bill name<input autoFocus value={name} onChange={(event) => setName(event.target.value)} required /></label><div className="form-row"><label>Category<select value={category} onChange={(event) => setCategory(event.target.value)}>{categories.filter((item) => !item.toLowerCase().includes("income") && item !== "Salary").map((item) => <option key={item}>{item}</option>)}</select></label><label>Amount<input inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} required /></label></div>{category === "Custom" && <label>Custom category name<input value={customCategory} onChange={(event) => setCustomCategory(event.target.value)} required /></label>}<div className="form-row"><label>Due date<input type="date" value={date} onChange={(event) => setDate(event.target.value)} required /></label><label>Repeats<select value={recurrence} onChange={(event) => setRecurrence(event.target.value as Bill["recurrence"])}><option value="monthly">Monthly</option><option value="weekly">Weekly</option><option value="yearly">Yearly</option><option value="once">One time</option></select></label></div><div className="form-row"><label>Payment account<select value={account} onChange={(event) => setAccount(event.target.value as AccountName)}><option value="checking">Checking</option><option value="savings">Savings</option></select></label><label>Reminder<select value={reminderDays} onChange={(event) => setReminderDays(Number(event.target.value))}><option value={-1}>Off</option><option value={1}>1 day before</option><option value={3}>3 days before</option><option value={7}>7 days before</option></select></label></div><p className="settings-note">Background reminders require device registration from the bell menu. After payment, the next recurring occurrence is prepared automatically. Edit the upcoming occurrence to change its schedule; choose One time to stop repeating after that payment.</p><button className="primary-button submit-button" type="submit">{existing ? "Save bill" : "Add to bill planning"}</button></form></Modal>;
 }
 
 function BillPaymentDialog({ bill, data, name, onClose, onSave }: { bill: Bill; data: HouseholdData; name: string; onClose: () => void; onSave: (payment: Transaction) => void }) {
   const [mode, setMode] = useState(bill.paid ? "existing" : "new"); const [selected, setSelected] = useState(""); const [amount, setAmount] = useState(String(bill.amount)); const [date, setDate] = useState(todayISO()); const [account, setAccount] = useState<AccountName>(bill.account || "checking");
-  const eligible = sortTransactions(data.transactions.filter((item) => item.amount < 0 && transactionKind(item) === "expense" && !item.billId));
+  const eligible = sortTransactions(data.transactions.filter((item) => item.amount < 0 && transactionKind(item) === "expense" && (!item.billId || item.billId === bill.id)));
   const submit = (event: FormEvent) => { event.preventDefault(); if (mode === "existing") { const payment = eligible.find((item) => item.id === selected); if (payment) onSave(payment); return; } const value = Math.abs(Number(amount)); if (!Number.isFinite(value) || !value) return; onSave({ id: `bill-payment-${bill.id}-${bill.dueDate}`, billId: bill.id, description: bill.name, category: bill.category, amount: -value, date, account, type: "expense", status: "pending", enteredBy: name, createdAt: new Date().toISOString() }); };
   return <Modal title={`Record payment: ${bill.name}`} onClose={onClose}><form className="entry-form" onSubmit={submit}><p>This records a payment you have made. It does not send money to the bill provider.</p><label>Payment entry<select value={mode} onChange={(event) => setMode(event.target.value)}><option value="new">Create a new transaction</option><option value="existing">Link a transaction already entered</option></select></label>{mode === "new" ? <><div className="form-row"><label>Paid amount<input value={amount} inputMode="decimal" onChange={(event) => setAmount(event.target.value)} required /></label><label>Payment date<input type="date" value={date} onChange={(event) => setDate(event.target.value)} required /></label></div><label>Paid from<select value={account} onChange={(event) => setAccount(event.target.value as AccountName)}><option value="checking">Checking</option><option value="savings">Savings</option></select></label><p className="settings-note">One pending expense will reduce this account and remove the bill from planning. Do not add the same payment again in Transactions.</p></> : <><label>Existing expense<select value={selected} onChange={(event) => setSelected(event.target.value)} required><option value="">Choose a transaction</option>{eligible.map((item) => <option key={item.id} value={item.id}>{item.date} · {item.description} · {currency.format(item.amount)}</option>)}</select></label><p className="settings-note">The chosen transaction already affects your balance. Linking it adds no additional expense.</p></>}<button className="primary-button" type="submit" disabled={bill.paid && Boolean(bill.paymentTransactionId)}>{mode === "new" ? "Record payment and transaction" : "Link transaction and mark paid"}</button></form></Modal>;
 }
@@ -626,10 +651,17 @@ function CashFlowChart({ transactions }: { transactions: Transaction[] }) {
   const maximum = Math.max(1, ...weeks.flatMap((week) => [week.income, week.spending]));
   return <><div className="cash-chart" role="img" aria-label={weeks.map((week, index) => `Week ${index + 1}: income ${currency.format(week.income)}, spending ${currency.format(week.spending)}`).join(". ")}>{weeks.map((week, index) => <div className="cash-week" key={index}><div className="cash-bars"><i className="cash-income" style={{ height: `${week.income / maximum * 100}%` }} title={`Income: ${currency.format(week.income)}`} /><i className="cash-spending" style={{ height: `${week.spending / maximum * 100}%` }} title={`Spending: ${currency.format(week.spending)}`} /></div><small>Week {index + 1}</small><span>{currency.format(week.income - week.spending)}</span></div>)}</div><p className="chart-key"><i /> Income <i /> Spending · Weekly net below each group. Transfers excluded.</p></>;
 }
-function BillRow({ bill, onToggle }: { bill: Bill; onToggle: (id: string) => void }) { const days = daysUntil(bill.dueDate); return <div className="bill-row"><button className="bill-check" aria-label={`Mark ${bill.name} paid`} onClick={() => onToggle(bill.id)}><Check /></button><div><strong>{bill.name}</strong><span>{bill.category} · {days < 0 ? `${Math.abs(days)} days overdue` : `Due in ${days} days`}</span></div><b>{currency.format(bill.amount)}</b></div>; }
+function BillRow({ bill, onToggle }: { bill: Bill; onToggle: (id: string) => void }) { const days = daysUntil(bill.dueDate); return <div className="bill-row"><button className="bill-check" aria-label={`Record payment for ${bill.name}`} onClick={() => onToggle(bill.id)}><Check /></button><div><strong>{bill.name}</strong><span>{bill.category} · {days < 0 ? `${Math.abs(days)} days overdue` : `Due in ${days} days`}</span></div><b>{currency.format(bill.amount)}</b></div>; }
 function EmptyState({ icon, title, copy }: { icon: React.ReactNode; title: string; copy: string }) { return <div className="empty-state">{icon}<strong>{title}</strong><span>{copy}</span></div>; }
 function accountLabel(account: AccountName) { return account === "checking" ? "Checking" : "Savings"; }
-function viewTitle(view: View) { return view === "overview" ? greeting() : ({ activity: "Household activity", archive: "Monthly archive", bills: "Upcoming bills", import: "Import & export", sync: "Cloud sync", settings: "Settings" } as const)[view]; }
+function saveStatus(sync: SyncState, lastSyncAt: Date | null) {
+  if (sync === "local") return "Saved on this device only";
+  if (sync === "synced" && lastSyncAt) return `Saved to cloud at ${lastSyncAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" })}`;
+  if (sync === "offline") return "Saved on this device · waiting for cloud sync";
+  if (sync === "needs-setup") return "Cloud save needs attention · check Sync";
+  return "Saving to cloud…";
+}
+function viewTitle(view: View) { return view === "overview" ? greeting() : ({ activity: "Household transactions", archive: "Monthly archive", bills: "Upcoming bills", import: "Import & export", sync: "Cloud sync", settings: "Settings" } as const)[view]; }
 function syncLabel(sync: SyncState) { return ({ local: "Local preview", connecting: "Connecting", synced: "Cloud save active", "needs-setup": "Enrollment needed", offline: "Working offline" } as const)[sync]; }
 function csvEscape(value: string) { return `"${value.replaceAll('"', '""')}"`; }
 function parseJson(text: string, enteredBy: string): Transaction[] { const parsed = JSON.parse(text); const rows = Array.isArray(parsed) ? parsed : parsed.transactions; if (!Array.isArray(rows)) throw new Error("JSON must contain a transactions array."); return rows.map((row) => normalizeImport(row, enteredBy, "JSON import")).filter(Boolean) as Transaction[]; }

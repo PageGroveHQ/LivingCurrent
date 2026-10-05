@@ -327,7 +327,7 @@ svg { width: 20px; height: 20px; stroke-width: 1.8; }
   .main-panel { margin-left: 0; padding-bottom: 76px; }
   .topbar { min-height: 82px; padding: 14px 18px; }
   .menu-button { display: grid; flex: 0 0 auto; }
-  .page-heading { margin-right: auto; }.page-heading span { display: none; }.page-heading h1 { font-size: 1.5rem; }
+  .page-heading { margin-right: auto; min-width:0; flex:1; }.page-heading span { display: none; }.page-heading h1 { font-size: 1.25rem; }
   .topbar-actions { flex-shrink: 0; gap: 6px; }
   .topbar .icon-button { display: grid; flex-shrink: 0; }
   .topbar .primary-button { width: 44px; min-width: 44px; padding: 0; border-radius: 50%; }.topbar .primary-button span { display: none; }
@@ -369,3 +369,17 @@ svg { width: 20px; height: 20px; stroke-width: 1.8; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+.save-status { display:flex;align-items:center;justify-content:flex-end;gap:16px;padding:10px 24px;font-size:.8rem;color:#48665c;background:#e5eee8; }
+.save-status button { border:0;background:transparent;color:#173e32;text-decoration:underline;font:inherit;cursor:pointer; }
+.tools-panel { padding:24px;margin-bottom:22px; }
+.tools-panel h3,.notification-health h3 { margin:0 0 12px; }
+.tools-panel p,.notification-health p { font-size:.85rem;line-height:1.6;color:#60746a; }
+.review-row { display:flex;align-items:center;gap:14px;padding:14px 0;border-top:1px solid #dde4dd; }
+.review-row > div { flex:1;min-width:0; }.review-row small { display:block;font-size:.75rem;color:#6b7d74;margin-top:5px; }
+.review-row button { border:1px solid #cbd8cd;border-radius:8px;background:#f4f7f2;padding:8px 10px;color:#143c30;cursor:pointer; }
+.summary-metrics { display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:18px; }.summary-metrics span { display:block;font-size:.75rem;color:#64796d; }.summary-metrics strong { display:block;font-size:1.3rem;margin-top:8px; }
+.category-summary > div { display:flex;justify-content:space-between;gap:15px;padding:9px 0;border-top:1px solid #e0e6de;font-size:.85rem; }
+.recovery-confirm { padding:18px;background:#eaf0e8;border-radius:12px; }.notification-health { border-top:1px solid #dce4dc;padding-top:20px;margin-top:20px; }.notification-health dl div { display:flex;justify-content:space-between;gap:16px;padding:8px 0;font-size:.8rem; }.notification-health dd { margin:0;text-align:right; }
+@media(max-width:640px) { .summary-metrics { grid-template-columns:1fr 1fr; }.review-row { flex-wrap:wrap; }.review-row > div { flex-basis:65%; }.save-status { justify-content:flex-start;padding:10px 16px;flex-wrap:wrap; }.balance-actions span { display:block!important;font-size:.75rem; } }
+.list-controls label { min-width:0; }
+.list-controls select { width:100%;min-width:0;max-width:100%; }

@@ -23,11 +23,11 @@ service cloud.firestore {
         function householdMember() {
           return request.auth != null && request.auth.uid in get(/databases/$(database)/documents/households/$(householdId)).data.memberUids;
         }
-        allow get, delete: if householdMember();
-        allow list: if false;
+        allow get, list, delete: if householdMember();
         allow create, update: if householdMember()
           && deviceId.matches('^[a-f0-9]{64}$')
-          && request.resource.data.keys().hasOnly(['endpoint', 'keys', 'registeredBy', 'publicKey', 'updatedAt'])
+          && request.resource.data.keys().hasOnly(['endpoint', 'keys', 'registeredBy', 'publicKey', 'updatedAt', 'deviceLabel'])
+          && (!('deviceLabel' in request.resource.data) || (request.resource.data.deviceLabel is string && request.resource.data.deviceLabel.size() < 80))
           && request.resource.data.registeredBy == request.auth.uid
           && request.resource.data.endpoint is string
           && request.resource.data.endpoint.size() < 2048
@@ -42,6 +42,10 @@ service cloud.firestore {
           && request.resource.data.updatedAt is string;
       }
       match /pushDeliveries/{deliveryId} { allow read, write: if false; }
+      match /pushHealth/{healthId} {
+        allow read: if request.auth != null && request.auth.uid in get(/databases/$(database)/documents/households/$(householdId)).data.memberUids;
+        allow write: if false;
+      }
     }
   }
 }

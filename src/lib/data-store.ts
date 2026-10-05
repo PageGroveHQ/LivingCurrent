@@ -21,7 +21,7 @@ const cloudValues = (data: HouseholdData) => JSON.parse(JSON.stringify(data));
 export function mergeHouseholdChanges(base: HouseholdData, next: HouseholdData, remote: HouseholdData): HouseholdData {
   const result = { ...remote };
   for (const key of Object.keys(next) as (keyof HouseholdData)[]) {
-    if (key === "transactions" || key === "bills") continue;
+    if (key === "transactions" || key === "bills" || key === "recovery") continue;
     if (JSON.stringify(base[key]) !== JSON.stringify(next[key])) Object.assign(result, { [key]: next[key] });
   }
   const mergeRows = <T extends { id: string }>(before: T[], after: T[], cloud: T[]) => {
@@ -34,6 +34,7 @@ export function mergeHouseholdChanges(base: HouseholdData, next: HouseholdData, 
   };
   result.transactions = mergeRows(base.transactions, next.transactions, remote.transactions);
   result.bills = mergeRows(base.bills, next.bills, remote.bills);
+  result.recovery = mergeRows(base.recovery || [], next.recovery || [], remote.recovery || []);
   return reconcileBillPayments(result);
 }
 

@@ -32,7 +32,11 @@ export type Bill = {
   enteredBy?: string;
   reminderDays?: number;
   account?: AccountName;
+  seriesId?: string;
+  recurrenceAnchorDate?: string;
 };
+
+export type RecoveryRecord = { id: string; kind: "transaction" | "bill"; action: "deleted" | "edited"; savedAt: string; record: Transaction | Bill };
 
 export type HouseholdData = {
   schemaVersion?: number;
@@ -47,6 +51,7 @@ export type HouseholdData = {
   partnerName: string;
   transactions: Transaction[];
   bills: Bill[];
+  recovery?: RecoveryRecord[];
   updatedAt: string;
 };
 

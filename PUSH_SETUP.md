@@ -31,4 +31,6 @@ The website stays on GitHub Pages and household data stays in Firebase. GitHub A
 
 Credentials are available to code in this repository's workflow. Limit write access to the repository, protect the default branch, and review dependency updates. Do not put service-account JSON into repository files. Revoke the service-account key and rotate the private push key if compromised; then re-register devices. Prefer GitHub OIDC federation instead of a long-lived service-account key when you have that configured.
 
+The bell menu also shows notification health: registered devices, latest scheduler check, last successful run, and push-service acceptance/failure counts. Publish the latest rules again after installing this update to permit household-only health/device-list reads. Device registration is not proof of delivery; an accepted push is not confirmation that a phone displayed it. Checks older than 36 hours are flagged. Credentials/authentication failures may prevent health updates; review GitHub Actions for those cases.
+
 Tests: `npm test` and `npm test --prefix functions`. No live push can be verified before the secrets, rules, and device registration are configured.

@@ -19,6 +19,8 @@ async function main() {
   const test = process.env.TEST_PUSH === "true";
   if (!test && process.env.MANUAL_RUN !== "true" && hour < 9) { console.log("Waiting for the Eastern morning window."); return; }
   const bills = test ? [{ id:"background-test", dueDate:today, reminderDays:1 }] : (snapshot.data().bills || []).filter((bill) => reminderDue(bill,today));
+  const health = household.collection("pushHealth").doc("status");
+  await health.set({ checkedAt:new Date().toISOString(), finishedAt:null, mode:test?"Background test":"Bill reminders" }, {merge:true});
   let sent = 0; let failed = 0;
   for (const device of (await household.collection("pushDevices").get()).docs) {
     const stored = device.data();
@@ -48,6 +50,7 @@ async function main() {
     }
   }
   console.log(`Reminder run complete: ${sent} accepted by push services, ${failed} failed. Acceptance is not guaranteed device delivery.`);
+  await health.set({ finishedAt:new Date().toISOString(), accepted:sent, failed, activeDevices:(await household.collection("pushDevices").get()).size, ...(failed?{}:{lastSuccessAt:new Date().toISOString()}) }, {merge:true});
   if (failed) process.exitCode = 1;
 }
 main().catch(() => { console.error("Reminder run failed. Check secrets, project permissions, and household setup; sensitive details omitted."); process.exitCode = 1; });

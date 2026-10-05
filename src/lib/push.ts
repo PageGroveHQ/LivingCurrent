@@ -31,7 +31,8 @@ export async function enablePush() {
   const key = Uint8Array.from(atob(publicKey.replace(/-/g, "+").replace(/_/g, "/")), (char) => char.charCodeAt(0));
   const subscription = await registration.pushManager.getSubscription() || await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
   const raw = subscription.toJSON();
-  await setDoc(doc(database, "households", householdId, "pushDevices", await deviceId(subscription.endpoint)), { endpoint: subscription.endpoint, keys: raw.keys, registeredBy: getAuth(firebaseApp()).currentUser!.uid, publicKey, updatedAt: new Date().toISOString() });
+  const deviceLabel = /iPhone|iPad/i.test(navigator.userAgent) ? "iPhone / iPad" : /Android/i.test(navigator.userAgent) ? "Android" : /Firefox/i.test(navigator.userAgent) ? "Firefox desktop" : /Edg/i.test(navigator.userAgent) ? "Edge desktop" : /Chrome/i.test(navigator.userAgent) ? "Chrome desktop" : "Desktop browser";
+  await setDoc(doc(database, "households", householdId, "pushDevices", await deviceId(subscription.endpoint)), { endpoint: subscription.endpoint, keys: raw.keys, registeredBy: getAuth(firebaseApp()).currentUser!.uid, publicKey, deviceLabel, updatedAt: new Date().toISOString() });
 }
 export async function disablePush() {
   const registration = await worker();
