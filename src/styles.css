@@ -328,7 +328,9 @@ svg { width: 20px; height: 20px; stroke-width: 1.8; }
   .topbar { min-height: 82px; padding: 14px 18px; }
   .menu-button { display: grid; flex: 0 0 auto; }
   .page-heading { margin-right: auto; }.page-heading span { display: none; }.page-heading h1 { font-size: 1.5rem; }
-  .topbar .icon-button { display: none; }.topbar .primary-button { width: 44px; min-width: 44px; padding: 0; border-radius: 50%; }.topbar .primary-button span { display: none; }
+  .topbar-actions { flex-shrink: 0; gap: 6px; }
+  .topbar .icon-button { display: grid; flex-shrink: 0; }
+  .topbar .primary-button { width: 44px; min-width: 44px; padding: 0; border-radius: 50%; }.topbar .primary-button span { display: none; }
   .page-content { padding: 22px 16px 40px; }
   .balance-hero { grid-template-columns: 1fr; gap: 18px; min-height: 0; padding: 28px 24px 0; border-radius: 22px; }
   .balance-copy > strong { font-size: clamp(3rem, 15vw, 4.4rem); }.balance-actions { align-items: flex-start; }.balance-actions span { display: none; }
