@@ -18,6 +18,7 @@ export type Transaction = {
   importSource?: string;
   status?: "pending" | "posted";
   billId?: string;
+  paydayPeriod?: string;
 };
 
 export type Bill = {
@@ -47,6 +48,7 @@ export type HouseholdData = {
   savingsBalance?: number;
   startingBalance?: number;
   safetyBuffer: number;
+  paydayOverride?: { period: string; date: string } | null;
   displayName: string;
   partnerName: string;
   transactions: Transaction[];

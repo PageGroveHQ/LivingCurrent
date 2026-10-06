@@ -373,6 +373,15 @@ svg { width: 20px; height: 20px; stroke-width: 1.8; }
 .save-status button { border:0;background:transparent;color:#173e32;text-decoration:underline;font:inherit;cursor:pointer; }
 .tools-panel { padding:24px;margin-bottom:22px; }
 .push-actions { display:flex;flex-wrap:wrap;gap:10px; }
+.payday-card { display:grid;grid-template-columns:1fr 1fr;gap:24px;margin:20px 0;padding:26px; }
+.payday-card .secondary-button { border:1px solid #d2ded5;background:transparent;color:#294b3f;border-radius:10px;padding:10px 14px;cursor:pointer;font:inherit;font-size:.8rem; }
+.payday-eyebrow { font-size:.7rem;letter-spacing:.16em;color:#7c613c; }
+.payday-card h3 { margin:10px 0;font-size:1.5rem; }
+.payday-card h3 small { display:block;font:400 .85rem/1.8 sans-serif;color:#60746a; }
+.payday-card p { color:#60746a;font-size:.85rem;line-height:1.6; }
+.payday-funds>span { display:block;font-size:.85rem;color:#60746a; }
+.payday-funds>strong { display:block;font-size:2rem;margin-top:8px; }
+@media(max-width:650px) { .payday-card { grid-template-columns:1fr;gap:20px; } }
 .reminder-disclosure { border-top:1px solid #dce4dc;margin-top:16px;padding-top:12px; }
 .reminder-disclosure summary { cursor:pointer;font-size:.85rem;color:#294b3f;padding:4px 0; }
 .reminder-disclosure summary:focus-visible { outline:2px solid #b88240;outline-offset:4px; }
