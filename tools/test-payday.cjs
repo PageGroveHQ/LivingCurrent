@@ -18,6 +18,16 @@ const data = { transactions: [], bills: [
 ], safetyBuffer:100 };
 let result = plan(data, 1000, '2026-10-06');
 assert.equal(result.days,24);
+assert.equal(result.windowStart,'2026-10-26');
+assert.equal(result.status,'20 days until payday week');
+assert.equal(plan(data,1000,'2026-10-26').status,'Pay expected this week');
+assert.equal(plan(data,1000,'2026-10-30').status,'Pay expected this week');
+assert.equal(plan(data,1000,'2026-10-31').status,'Pay not yet recorded');
+const exact = plan({...data,paydayOverride:{period:'2026-10',date:'2026-10-23'}},1000,'2026-10-23');
+assert.equal(exact.windowStart,'2026-10-23');
+assert.equal(exact.status,'Expected today');
+assert.equal(exact.exactDate,true);
+assert.equal(plan({...data,bills:[{amount:40,paid:false,dueDate:'2026-10-29'}]},1000,'2026-10-26').reserved,40,'Reserve bills through Friday, not Monday');
 assert.equal(result.available,730);
 assert.equal(result.daily,730/24);
 assert.equal(plan({...data,safetyBuffer:0},4336.78,'2026-10-06').available,4166.78,'Combined checking and savings must cover bills from both accounts with no zero-buffer deduction');
