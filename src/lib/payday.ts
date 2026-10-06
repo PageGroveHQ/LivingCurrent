@@ -17,7 +17,7 @@ export function isReceivedPay(item: Transaction, today: string): boolean {
   return Boolean(item.paydayPeriod && item.date <= today && item.amount > 0 && (item.type || "income") === "income");
 }
 
-export function paydayPlan(data: HouseholdData, checking: number, today: string) {
+export function paydayPlan(data: HouseholdData, currentFunds: number, today: string) {
   const received = data.transactions.filter(item => isReceivedPay(item, today));
   // Retain an explicitly delayed payday across month boundaries until its income is recorded.
   let period = data.paydayOverride && data.paydayOverride.period < today.slice(0, 7)
@@ -25,8 +25,8 @@ export function paydayPlan(data: HouseholdData, checking: number, today: string)
   while (received.some(item => item.paydayPeriod === period)) period = shiftPeriod(period, 1);
   const date = data.paydayOverride?.period === period ? data.paydayOverride.date : lastFriday(period);
   const days = Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86400000);
-  const reserved = data.bills.filter(bill => !bill.paid && (bill.account || "checking") === "checking" && bill.dueDate <= date).reduce((sum, bill) => sum + bill.amount, 0);
-  const available = checking - reserved - data.safetyBuffer;
+  const reserved = data.bills.filter(bill => !bill.paid && bill.dueDate <= date).reduce((sum, bill) => sum + bill.amount, 0);
+  const available = currentFunds - reserved - data.safetyBuffer;
   const latest = [...received].sort((a,b) => b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt))[0];
   return { period, date, days, reserved, available, daily: days > 0 ? Math.max(0, available) / days : null, latest };
 }

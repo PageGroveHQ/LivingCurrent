@@ -18,8 +18,10 @@ const data = { transactions: [], bills: [
 ], safetyBuffer:100 };
 let result = plan(data, 1000, '2026-10-06');
 assert.equal(result.days,24);
-assert.equal(result.available,780);
-assert.equal(result.daily,32.5);
+assert.equal(result.available,730);
+assert.equal(result.daily,730/24);
+assert.equal(plan({...data,safetyBuffer:0},4336.78,'2026-10-06').available,4166.78,'Combined checking and savings must cover bills from both accounts with no zero-buffer deduction');
+assert.equal(plan(data,1000+500,'2026-10-06').available,plan(data,800+700,'2026-10-06').available,'Internal transfers must not change available combined funds');
 const pay = { id:'pay', type:'income', amount:2000, date:'2026-10-28', paydayPeriod:'2026-10', createdAt:'2026-10-28T12:00:00Z' };
 assert.equal(plan({...data,transactions:[pay]},1000,'2026-10-06').period,'2026-10','Future income must not mark pay received');
 assert.equal(plan({...data,transactions:[pay]},3000,'2026-10-28').date,'2026-11-27','Early pay advances to next regular payday');

@@ -393,7 +393,7 @@ function Overview({ data, totals, onNavigate, onAdd, onToggleBill, sync, lastSyn
         </div>
       </section>
 
-      <PaydayCard data={data} checking={totals.checking} today={todayISO()} onSettings={() => onNavigate("settings")} />
+      <PaydayCard data={data} checking={totals.checking} savings={totals.savings} today={todayISO()} onSettings={() => onNavigate("settings")} />
       <div className="dashboard-grid">
         <section className="panel flow-panel">
           <PanelHeader eyebrow={monthLabel(monthKey()).toUpperCase()} title="Household current" action="View transactions" onAction={() => onNavigate("activity")} />
