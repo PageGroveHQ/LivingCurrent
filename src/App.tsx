@@ -382,7 +382,7 @@ function Overview({ data, totals, onNavigate, onAdd, onToggleBill, sync, lastSyn
     <div className="page-content overview-page">
       <section className="balance-hero">
         <div className="hero-current" aria-hidden="true"><i /><i /><i /><i /></div>
-        <div className="balance-copy"><span>CURRENT BALANCE</span><strong>{currency.format(totals.current)}</strong><p>{currency.format(totals.checking)} checking + {currency.format(totals.savings)} savings</p><div className={`available-callout ${totals.available < 0 ? "negative" : ""}`}><span>Available after bill planning and safety buffer</span><b>{currency.format(totals.available)}</b></div></div>
+        <div className="balance-copy"><span>CURRENT BALANCE</span><strong>{currency.format(totals.current)}</strong><p>{currency.format(totals.checking)} checking + {currency.format(totals.savings)} savings</p></div>
         <div className="balance-actions"><button onClick={onAdd}><Plus /> Add transaction</button><span><CloudCheck />{saveStatus(sync, lastSyncAt)}</span></div>
         <div className="balance-breakdown">
           <Metric label="Bill planning" value={totals.reserved} />
