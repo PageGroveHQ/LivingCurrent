@@ -182,6 +182,8 @@ svg { width: 20px; height: 20px; stroke-width: 1.8; }
 .ledger-head { display: grid; grid-template-columns: 1.4fr 1fr .7fr .6fr .7fr 34px; gap: 14px; padding: 14px 20px; color: var(--muted); background: #eef1ec; font-size: .68rem; }
 .ledger-row { display: grid; grid-template-columns: 38px minmax(130px, 1.4fr) 1fr .7fr .6fr .7fr 34px; align-items: center; gap: 14px; padding: 14px 20px; border-top: 1px solid #e1e5df; font-size: .78rem; }
 .ledger-row > strong { font-weight: 500; }
+.ledger-swipe,.ledger-swipe-track { display:contents; }
+.mobile-ledger-meta,.mobile-actions-toggle,.mobile-swipe-actions { display:none; }
 .ledger-row > span { color: var(--muted); }
 .ledger-row > b { text-align: right; font-weight: 500; }
 .ledger-row > button { width: 34px; height: 34px; display: grid; place-items: center; border: 0; border-radius: 10px; color: #9b6c66; background: transparent; }
@@ -360,7 +362,7 @@ svg { width: 20px; height: 20px; stroke-width: 1.8; }
   .balance-breakdown strong { font-size: .88rem; }
   .flow-summary { gap: 18px; }.flow-chart { gap: 6px; }
   .category-visual { grid-template-columns: 1fr; }.donut { width: 145px; margin: 0 auto; }
-  .transaction-row { grid-template-columns: auto 1fr auto; }.transaction-row time { display: none; }.transaction-row b { min-width: auto; }
+  .transaction-row { grid-template-columns: auto minmax(0,1fr) auto; }.transaction-row time { display:block;grid-column:2;grid-row:2;margin-top:-8px; }.transaction-row b { min-width: auto;grid-column:3;grid-row:1; }.transaction-row > div:nth-child(2) { min-width:0;overflow-wrap:anywhere; }
   .form-row { grid-template-columns: 1fr; }
   .type-toggle button { gap:4px;font-size:.7rem }.type-toggle svg { width:15px }
   .upload-panel, .export-panel, .settings-form, .connection-panel { padding: 23px; }
@@ -373,6 +375,25 @@ svg { width: 20px; height: 20px; stroke-width: 1.8; }
 .save-status button { border:0;background:transparent;color:#173e32;text-decoration:underline;font:inherit;cursor:pointer; }
 .tools-panel { padding:24px;margin-bottom:22px; }
 .push-actions { display:flex;flex-wrap:wrap;gap:10px; }
+@media(max-width:780px) {
+  .transaction-row { grid-template-columns:auto minmax(0,1fr) auto; }
+  .transaction-row > div:nth-child(2) { min-width:0;overflow-wrap:anywhere; }
+  .transaction-row time { display:block;grid-column:2;grid-row:2;margin-top:-8px; }
+  .transaction-row b { grid-column:3;grid-row:1;min-width:auto; }
+  .ledger-swipe { display:block;overflow-x:auto;overscroll-behavior-x:contain;scroll-snap-type:x mandatory;scrollbar-width:none; }
+  .ledger-swipe::-webkit-scrollbar { display:none; }
+  .ledger-swipe-track { display:flex;min-width:100%; }
+  .ledger-swipe .ledger-row { flex:0 0 100%;box-sizing:border-box;grid-template-columns:32px minmax(0,1fr) auto 32px!important;gap:10px;scroll-snap-align:start; }
+  .ledger-row > strong { min-width:0;overflow-wrap:anywhere; }
+  .ledger-row > b { min-width:0!important;white-space:nowrap; }
+  .ledger-row .mobile-ledger-meta { display:block;font-weight:400;font-size:.7rem;line-height:1.5;color:var(--muted);margin-top:4px; }
+  .ledger-row .desktop-ledger-actions { display:none; }
+  .ledger-row .mobile-actions-toggle { display:grid;place-items:center;width:32px;height:44px;padding:4px;color:var(--muted); }
+  .mobile-swipe-actions { display:flex;flex:0 0 auto;scroll-snap-align:end;border-top:1px solid #e1e5df; }
+  .mobile-swipe-actions button { width:64px;border:0;background:#245346;color:white;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;font:inherit;font-size:.7rem;min-height:72px; }
+  .mobile-swipe-actions button.swipe-delete { background:#a64e45; }
+  .mobile-swipe-actions svg { width:20px;height:20px; }
+}
 .payday-card { display:grid;grid-template-columns:1fr 1fr;gap:24px;margin:20px 0;padding:26px; }
 .payday-card .secondary-button { border:1px solid #d2ded5;background:transparent;color:#294b3f;border-radius:10px;padding:10px 14px;cursor:pointer;font:inherit;font-size:.8rem; }
 .payday-eyebrow { font-size:.7rem;letter-spacing:.16em;color:#7c613c; }

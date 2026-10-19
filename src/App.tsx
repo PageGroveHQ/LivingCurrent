@@ -20,6 +20,7 @@ import {
   LogOut,
   Mail,
   Menu,
+  MoreHorizontal,
   Plus,
   Pencil,
   ReceiptText,
@@ -649,7 +650,29 @@ function NavButton({ active, icon, label, onClick }: { active: boolean; icon: Re
 function Metric({ label, value, tone }: { label: string; value: number; tone?: string }) { const displayValue = Math.abs(value) < .005 ? 0 : value; return <div><span>{label}</span><strong className={tone ? `amount-${tone}` : ""}>{displayValue > 0 && tone === "positive" ? "+" : ""}{currency.format(displayValue)}</strong></div>; }
 function PanelHeader({ eyebrow, title, action, onAction }: { eyebrow: string; title: string; action?: string; onAction?: () => void }) { return <header className="panel-header"><div><span>{eyebrow}</span><h3>{title}</h3></div>{action && <button onClick={onAction}>{action}<ChevronRight /></button>}</header>; }
 function TransactionRow({ item }: { item: Transaction }) { const kind = transactionKind(item); const tone = kind === "transfer" ? "" : item.amount > 0 ? "amount-positive" : "amount-negative"; return <div className="transaction-row"><div className={`transaction-icon ${kind}`}>{kind === "transfer" ? <ArrowRightLeft /> : kind === "income" ? <ArrowDownLeft /> : <ArrowUpRight />}</div><div><strong>{item.description}{item.status === "pending" && <small className="pending-badge">Pending</small>}</strong><span>{kind === "transfer" ? `${accountLabel(transactionAccount(item))} to ${accountLabel(item.transferTo || "savings")}` : `${item.category} · ${accountLabel(transactionAccount(item))}`} · {item.enteredBy}</span></div><time>{shortDate.format(new Date(`${item.date}T12:00:00`))}</time><b className={tone}>{item.amount > 0 && kind !== "transfer" ? "+" : ""}{currency.format(item.amount)}</b></div>; }
-function LedgerRow({ item, onDelete, onEdit }: { item: Transaction; onDelete?: (id: string) => void; onEdit?: (item: Transaction) => void }) { const kind = transactionKind(item); const tone = kind === "transfer" ? "" : item.amount > 0 ? "amount-positive" : "amount-negative"; return <div className="ledger-row"><div className={`transaction-icon ${kind}`}>{kind === "transfer" ? <ArrowRightLeft /> : kind === "income" ? <ArrowDownLeft /> : <ArrowUpRight />}</div><strong>{item.description}{item.status === "pending" && <small className="pending-badge">Pending</small>}{item.notes && <small className="transaction-note">{item.notes}</small>}</strong><span>{kind === "transfer" ? `${accountLabel(transactionAccount(item))} → ${accountLabel(item.transferTo || "savings")}` : item.category}</span><span>{item.enteredBy}</span><span>{shortDate.format(new Date(`${item.date}T12:00:00`))}</span><b className={tone}>{item.amount > 0 && kind !== "transfer" ? "+" : ""}{currency.format(item.amount)}</b><div className="ledger-actions">{onEdit && <button aria-label={`Edit ${item.description}`} onClick={() => onEdit(item)}><Pencil /></button>}{onDelete && <button aria-label={`Delete ${item.description}`} onClick={() => onDelete(item.id)}><Trash2 /></button>}</div></div>; }
+function LedgerRow({ item, onDelete, onEdit }: { item: Transaction; onDelete?: (id: string) => void; onEdit?: (item: Transaction) => void }) {
+  const scroller = useRef<HTMLDivElement>(null);
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const kind = transactionKind(item);
+  const tone = kind === "transfer" ? "" : item.amount > 0 ? "amount-positive" : "amount-negative";
+  const category = kind === "transfer" ? `${accountLabel(transactionAccount(item))} → ${accountLabel(item.transferTo || "savings")}` : item.category;
+  const date = shortDate.format(new Date(`${item.date}T12:00:00`));
+  const hasActions = Boolean(onEdit || onDelete);
+  const closeActions = () => scroller.current?.scrollTo({ left: 0, behavior: "smooth" });
+  return <div className="ledger-swipe" ref={scroller} onScroll={event => setActionsOpen(event.currentTarget.scrollLeft > 30)} onKeyDown={event => { if (event.key === "Escape") closeActions(); }}>
+    <div className="ledger-swipe-track">
+      <div className="ledger-row">
+        <div className={`transaction-icon ${kind}`}>{kind === "transfer" ? <ArrowRightLeft /> : kind === "income" ? <ArrowDownLeft /> : <ArrowUpRight />}</div>
+        <strong>{item.description}{item.status === "pending" && <small className="pending-badge">Pending</small>}<small className="mobile-ledger-meta">{category} · <time dateTime={item.date}>{date}</time></small><small className="mobile-ledger-meta">{item.enteredBy}</small>{item.notes && <small className="transaction-note">{item.notes}</small>}</strong>
+        <span>{category}</span><span>{item.enteredBy}</span><span><time dateTime={item.date}>{date}</time></span>
+        <b className={tone}>{item.amount > 0 && kind !== "transfer" ? "+" : ""}{currency.format(item.amount)}</b>
+        <div className="ledger-actions desktop-ledger-actions">{onEdit && <button aria-label={`Edit ${item.description}`} onClick={() => onEdit(item)}><Pencil /></button>}{onDelete && <button aria-label={`Delete ${item.description}`} onClick={() => onDelete(item.id)}><Trash2 /></button>}</div>
+        {hasActions && <button className="mobile-actions-toggle" aria-label={`${actionsOpen ? "Hide" : "Show"} actions for ${item.description}`} aria-expanded={actionsOpen} onClick={() => scroller.current?.scrollTo({ left: actionsOpen ? 0 : scroller.current.scrollWidth, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" })}><MoreHorizontal /></button>}
+      </div>
+      {hasActions && <div className="mobile-swipe-actions" inert={!actionsOpen}>{onEdit && <button aria-label={`Edit ${item.description}`} onClick={() => { closeActions(); onEdit(item); }}><Pencil /><span>Edit</span></button>}{onDelete && <button className="swipe-delete" aria-label={`Delete ${item.description}`} onClick={() => { closeActions(); onDelete(item.id); }}><Trash2 /><span>Delete</span></button>}</div>}
+    </div>
+  </div>;
+}
 
 function CashFlowChart({ transactions }: { transactions: Transaction[] }) {
   const weeks = Array.from({ length: 5 }, (_, index) => {
