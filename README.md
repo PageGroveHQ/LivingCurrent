@@ -8,7 +8,7 @@ A mobile-first household finance tracker for recording income, expenses, upcomin
 - Available Balance after 31-day Bill Planning and the safety buffer
 - Expense, income, and checking/savings transfer entry
 - Current-month activity plus a monthly archive
-- Pending transaction tracking and bank-import reconciliation
+- Transaction tracking and bank imports
 - Searchable/filterable activity and archives, with 10-entry progressive pagination
 - Editable/deletable bills with linked payment transactions and configurable reminders
 - Per-device household identity
@@ -48,7 +48,7 @@ Use **Record payment** on a bill to create one expense transaction, or link an e
 
 Paid weekly/monthly/yearly bills automatically prepare their next unpaid occurrence, using deterministic IDs to avoid duplicates across devices. Month-end dates preserve the original day (January 31 → February 28 → March 31). Each paid occurrence keeps its linked payment/date. One-time bills do not repeat. Edit the upcoming occurrence to change its schedule or stop repeating. A future occurrence within the 31-day horizon is a new reservation, not another deduction for the paid bill.
 
-Transactions includes an all-month Pending review, monthly summaries, and full searchable lists. Mark posted changes status only; it never deducts money again. Settings provides shared recovery for deleted transactions/bills and pre-edit versions captured after this update; restoring can change balances. Recovery histories merge by row to preserve concurrent device changes. The app displays cloud acknowledgement time separately from locally saved/waiting-to-sync status.
+Transactions includes monthly summaries and full searchable lists. Every recorded transaction affects its account balance immediately. Settings provides shared recovery for deleted transactions/bills and pre-edit versions captured after this update; restoring can change balances. Recovery histories merge by row to preserve concurrent device changes. The app displays cloud acknowledgement time separately from locally saved/waiting-to-sync status.
 
 Reminders appear inside the app. Optional background Web Push runs through GitHub Actions, not Firebase Cloud Functions. See [push setup](PUSH_SETUP.md). It requires one-time credential/rules setup and notification permission on each device. Notifications are generic for lock-screen privacy. Paid bill cards show both the transaction's paid date and the bill's due date.
 

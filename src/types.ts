@@ -16,7 +16,6 @@ export type Transaction = {
   transferTo?: AccountName;
   affectsBalance?: boolean;
   importSource?: string;
-  status?: "pending" | "posted";
   billId?: string;
   paydayPeriod?: string;
 };

@@ -82,3 +82,20 @@ assert.equal(context.exports.saveStatus('local',null),'Saved on this device only
 assert.equal(context.exports.saveStatus('connecting',new Date()),'Saving to cloud…');
 assert.match(context.exports.saveStatus('synced',new Date()),/^Saved to cloud at /);
 console.log('Summary/save-status checks passed: refunds, pending entries, transfer exclusions, savings movement, honest sync states.');
+// Legacy bank-status metadata must have no effect after its UI is retired.
+const withoutLegacyStatus = summaryRows.map(({status,...item})=>item);
+assert.equal(context.exports.summary(withoutLegacyStatus,'2026-10').spending,summary.spending);
+const legacyData = {...original,transactions:summaryRows};
+assert.equal(context.exports.balances(legacyData).checking,context.exports.balances({...legacyData,transactions:withoutLegacyStatus}).checking);
+assert.equal(context.exports.balances(legacyData).savings,context.exports.balances({...legacyData,transactions:withoutLegacyStatus}).savings);
+assert.doesNotMatch(app,/PendingReview|pending-badge|onPosted|Mark posted|Posted \/ cleared/);
+assert.doesNotMatch(app.slice(app.indexOf('function TransactionDialog'),app.indexOf('function BillDialog')),/setStatus|<label>Status/);
+assert.doesNotMatch(toolsSource,/PendingReview|Mark posted|Includes pending/);
+const mergeImportSource = app.slice(app.indexOf('function mergeImportedTransactions'),app.indexOf('function App()'));
+vm.runInNewContext(stripTypeScriptTypes(mergeImportSource)+'\nexports.mergeImport=mergeImportedTransactions;',context);
+const existingImport = {id:'existing',date:'2026-10-02',amount:-12,description:'Store',createdAt:'2026-10-02T12:00:00Z',status:'pending',notes:'keep',billId:'linked'};
+const mergedImport = context.exports.mergeImport([existingImport],[{...existingImport,id:'bank',status:'posted'}]);
+assert.equal(mergedImport.length,1,'Exact import duplicates remain excluded without requiring transaction status');
+assert.equal(mergedImport[0].notes,'keep');
+assert.equal(mergedImport[0].billId,'linked');
+console.log('Status retirement checks passed: legacy balances, removed controls, duplicate import protection and retained links/notes.');

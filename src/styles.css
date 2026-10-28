@@ -155,7 +155,6 @@ svg { width: 20px; height: 20px; stroke-width: 1.8; }
 .transaction-icon svg { width: 17px; }
 .transaction-row strong, .transaction-row span { display: block; }
 .transaction-row strong { font-size: .85rem; font-weight: 500; }
-.pending-badge { display:inline-block !important;margin-left:7px;padding:2px 6px;border-radius:999px;color:#895a2f !important;background:#f1dfc8;font-family:"DM Sans",sans-serif;font-size:.54rem !important;font-weight:600;letter-spacing:.06em;text-transform:uppercase;vertical-align:2px }
 .transaction-row span, .transaction-row time { color: var(--muted); font-size: .69rem; }
 .transaction-row b { min-width: 88px; text-align: right; font-size: .83rem; font-weight: 500; }
 .category-visual { display: grid; grid-template-columns: 155px 1fr; align-items: center; gap: 25px; padding: 8px 25px 27px; }
